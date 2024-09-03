@@ -1,6 +1,6 @@
 {
   "name": "frontend",
-  "proxy": "http://127.0.0.1:5000",
+  "proxy": "http://127.0.0.1:4000",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -25,6 +25,7 @@
     ]
   },
   "dependencies": {
+    "--legacy-peer-deps": "^0.0.1-security.6",
     "@react-google-maps/api": "^2.7.0",
     "@testing-library/jest-dom": "^5.15.1",
     "@testing-library/react": "^12.1.2",
