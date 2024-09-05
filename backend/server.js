@@ -10,6 +10,12 @@ import orderRouter from './routers/orderRouter.js';
 import uploadRouter from './routers/uploadRouter.js';
 import cors from 'cors';
 
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 const allowedOrigins = ['http://localhost:3000', 'https://dhanyabuilders.netlify.app/'];
 
 const corsOptions = {
@@ -23,12 +29,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-dotenv.config();
-
-const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 mongoose.connect(process.env.MONGODB_URL || 'mongodb+srv://harikrishnan9a:qOvFm5duP3aTqXJ2@dhanyabuildersbackend.nz0as.mongodb.net/?retryWrites=true&w=majority&appName=dhanyabuildersBackend');
 app.use('/api/uploads', uploadRouter);
