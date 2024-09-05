@@ -15,20 +15,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-const allowedOrigins = ['http://localhost:3000', 'https://dhanyabuilders.netlify.app/'];
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  }
-};
-
-app.use(cors(corsOptions));
+app.use(cors());
 
 mongoose.connect(process.env.MONGODB_URL || 'mongodb+srv://harikrishnan9a:qOvFm5duP3aTqXJ2@dhanyabuildersbackend.nz0as.mongodb.net/?retryWrites=true&w=majority&appName=dhanyabuildersBackend');
 app.use('/api/uploads', uploadRouter);
