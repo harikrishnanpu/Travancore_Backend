@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import data from '../data.js';
 import User from '../models/userModel.js';
 import { generateToken, isAdmin, isAuth } from '../utils.js';
+import AttendenceModel from '../models/attendenceModel.js';
 
 const userRouter = express.Router();
 
@@ -30,6 +31,8 @@ userRouter.post(
   '/signin',
   expressAsyncHandler(async (req, res) => {
     const user = await User.findOne({ email: req.body.email });
+    const attendance = new AttendenceModel({ userId:  user._id});
+    await attendance.save();
     if (user) {
       if (bcrypt.compareSync(req.body.password, user.password)) {
         res.send({
@@ -39,6 +42,7 @@ userRouter.post(
           isAdmin: user.isAdmin,
           isSeller: user.isSeller,
           token: generateToken(user),
+          attendence: attendance
         });
         return;
       }
@@ -46,6 +50,61 @@ userRouter.post(
     res.status(401).send({ message: 'Invalid email or password' });
   })
 );
+
+
+
+
+
+// Get today's attendance for a specific user
+userRouter.get('/attendance/today/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  // Get the current date (start and end of day)
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0); // Start of day at 00:00:00
+  const endOfDay = new Date();
+  endOfDay.setHours(23, 59, 59, 999); // End of day at 23:59:59
+
+  try {
+    // Find the attendance for today
+    const attendance = await AttendenceModel.findOne({
+      userId,
+      loginTime: { $gte: startOfDay, $lte: endOfDay },
+    });
+
+    if (!attendance) {
+      return res.status(404).json({ message: 'No attendance record found for today' });
+    }
+
+    res.status(200).json(attendance);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching attendance', error: error.message });
+  }
+});
+
+
+userRouter.post('/logout/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  // Find today's attendance record for the user
+  const attendance = await AttendenceModel.findOne({
+    userId,
+    logoutTime: null, // Ensure we are only updating the active session
+  });
+
+  if (!attendance) {
+    return res.status(200).send('No active session found');
+  }
+
+  // // Record logout time
+  attendance.logoutTime = new Date();
+  await attendance.save();
+
+  res.status(200).send({ message: 'Logout successful' });
+
+});
+
+
 
 userRouter.post(
   '/register',
@@ -67,17 +126,10 @@ userRouter.post(
   })
 );
 
-userRouter.get(
-  '/:id',
-  expressAsyncHandler(async (req, res) => {
-    const user = await User.findById(req.params.id);
-    if (user) {
-      res.send(user);
-    } else {
-      res.status(404).send({ message: 'User Not Found' });
-    }
-  })
-);
+
+
+
+
 userRouter.put(
   '/profile',
   isAuth,
