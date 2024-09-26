@@ -5,6 +5,7 @@ import data from '../data.js';
 import User from '../models/userModel.js';
 import { generateToken, isAdmin, isAuth } from '../utils.js';
 import AttendenceModel from '../models/attendenceModel.js';
+import faceapi from 'face-api.js'
 
 const userRouter = express.Router();
 
@@ -208,5 +209,95 @@ userRouter.put(
     }
   })
 );
+
+
+userRouter.get('/get-face-data/:id', async (req,res) =>{
+  const userId = req.params.id
+
+  try{
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }else {
+    if(user.faceDescriptor){
+
+      return res.status(200).json(user)
+
+    }else{
+      return res.status(404).json({ message: 'User not found' });
+    }
+  }
+  }catch (error){
+    return res.status(404).json({ message: 'Error Occured' });
+  }
+
+
+})
+
+
+
+userRouter.post('/register-face/:id', async (req, res) => {
+  const { faceDescriptor } = req.body;
+
+  try {
+    // Find the user in the database
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.faceDescriptor = faceDescriptor
+    await user.save();
+    res.status(200).json({message: "successfull"})
+
+  } catch (error) {
+    console.error('Error during face recognition:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+
+});
+
+
+// Face recognition endpoint (receives face descriptor from frontend)
+userRouter.post('/recognize-face/:id', async (req, res) => {
+  const userId = req.params.id;
+  const { faceDescriptor } = req.body;
+
+  try {
+    // Find the user in the database
+    const user = await User.findById(userId);
+
+    if (!user || !user.faceDescriptor) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    function euclideanDistance(descriptor1, descriptor2) {
+      let sum = 0;
+      for (let i = 0; i < descriptor1.length; i++) {
+        sum += (descriptor1[i] - descriptor2[i]) ** 2;
+      }
+      return Math.sqrt(sum);
+    }
+
+    // Compare face descriptors using Euclidean distance
+    const distance = euclideanDistance(user.faceDescriptor, faceDescriptor);
+
+    if (distance < 0.6) {  // Threshold value for matching
+      console.log("SUCCESSS")
+      return res.status(200).json({ message: 'Face matched successfully!' });
+    } else {
+      console.log("FAIL")
+      return res.status(404).send({ message: 'Face did not match' });
+    }
+
+    
+  } catch (error) {
+    console.error('Error during face recognition:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
 
 export default userRouter;

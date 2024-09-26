@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 
 const userSchema = new mongoose.Schema(
   {
@@ -14,6 +14,7 @@ const userSchema = new mongoose.Schema(
       rating: { type: Number, default: 0, required: true },
       numReviews: { type: Number, default: 0, required: true },
     },
+    faceDescriptor: { type: Array , default: null }
   },
   {
     timestamps: true,

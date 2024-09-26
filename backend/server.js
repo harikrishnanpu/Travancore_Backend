@@ -10,6 +10,8 @@ import orderRouter from './routers/orderRouter.js';
 import uploadRouter from './routers/uploadRouter.js';
 import cors from 'cors';
 
+
+
 dotenv.config();
 
 const app = express();
@@ -34,6 +36,8 @@ app.use(express.static(path.join(__dirname, '/frontend/build')));
 app.get('*', (req, res) =>
   res.sendFile(path.join(__dirname, '/frontend/build/index.html'))
 );
+
+
 // app.get('/', (req, res) => {
 //   res.send('Server is ready');
 // });
