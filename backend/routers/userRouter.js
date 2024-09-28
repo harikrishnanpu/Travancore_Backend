@@ -5,7 +5,6 @@ import data from '../data.js';
 import User from '../models/userModel.js';
 import { generateToken, isAdmin, isAuth } from '../utils.js';
 import AttendenceModel from '../models/attendenceModel.js';
-import faceapi from 'face-api.js'
 
 const userRouter = express.Router();
 
@@ -218,16 +217,10 @@ userRouter.get('/get-face-data/:id', async (req,res) =>{
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
-    }else {
-    if(user.faceDescriptor){
-
+    }else if(user.faceDescriptor){
       return res.status(200).json(user)
-
-    }else{
-      return res.status(404).json({ message: 'User not found' });
     }
-  }
-  }catch (error){
+  }catch (error) {
     return res.status(404).json({ message: 'Error Occured' });
   }
 
@@ -297,6 +290,7 @@ userRouter.post('/recognize-face/:id', async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 
 

@@ -65,6 +65,7 @@ io.on('connection', (socket) => {
       }
     }
   });
+
   socket.on('onLogin', (user) => {
     const updatedUser = {
       ...user,
@@ -95,6 +96,14 @@ io.on('connection', (socket) => {
       const existUser = users.find((x) => x._id === user._id);
       io.to(admin.socketId).emit('selectUser', existUser);
     }
+  });
+
+  socket.on('typing', (data) => {
+    socket.broadcast.emit('typing', data); // Notify other users
+  });
+
+  socket.on('stopTyping', (data) => {
+    socket.broadcast.emit('stopTyping', data); // Notify other users to stop typing
   });
 
   socket.on('onMessage', (message) => {
