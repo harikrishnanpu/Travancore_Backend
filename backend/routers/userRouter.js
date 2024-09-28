@@ -5,6 +5,7 @@ import data from '../data.js';
 import User from '../models/userModel.js';
 import { generateToken, isAdmin, isAuth } from '../utils.js';
 import AttendenceModel from '../models/attendenceModel.js';
+import Location from '../models/locationModel.js'
 
 const userRouter = express.Router();
 
@@ -288,6 +289,16 @@ userRouter.post('/recognize-face/:id', async (req, res) => {
   } catch (error) {
     console.error('Error during face recognition:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+userRouter.get('/location/users', async (req, res) => {
+  try {
+      const locations = await Location.find();
+      res.status(200).json(locations);
+  } catch (error) {
+      res.status(500).json({ message: 'Error fetching locations' });
   }
 });
 

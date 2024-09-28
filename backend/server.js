@@ -9,6 +9,7 @@ import userRouter from './routers/userRouter.js';
 import orderRouter from './routers/orderRouter.js';
 import uploadRouter from './routers/uploadRouter.js';
 import cors from 'cors';
+import Location from './models/locationModel.js';
 
 
 
@@ -53,7 +54,7 @@ const io = new Server(httpServer, { cors: { origin: '*' } });
 const users = [];
 
 io.on('connection', (socket) => {
-  console.log('connection', socket.id);
+
   socket.on('disconnect', () => {
     const user = users.find((x) => x.socketId === socket.id);
     if (user) {
@@ -127,6 +128,57 @@ io.on('connection', (socket) => {
       }
     }
   });
+
+
+
+  // Listen for location updates from the client
+  socket.on('update-location', async (data) => {
+    try {
+        const { userId, longitude, latitude, userName } = data;
+
+        // Basic validation
+        if (typeof longitude !== 'number' || typeof latitude !== 'number') {
+            throw new Error('Invalid coordinates');
+        }
+
+        // Try to find and update the location
+        const updatedLocation = await Location.findOneAndUpdate(
+            { userId: userId },
+            { $set: { longitude, latitude, userName } },
+            { new: true }
+        );
+
+        // If the location doesn't exist, create a new one
+        if (!updatedLocation) {
+            const existingLocation = await Location.findOne({ userId: userId });
+            
+            // Check again to ensure the location doesn't already exist
+            if (!existingLocation) {
+                const newLoc = new Location({
+                    name: userName,
+                    coordinates: [longitude, latitude],
+                    userId: userId
+                });
+                await newLoc.save();
+                // console.log(`New location created for user ${userId}: [${longitude}, ${latitude}]`);
+            } else {
+                // console.log(`Location already exists for user ${userId}`);
+            }
+        }
+
+        // Broadcast the location update to all connected clients
+        io.emit('location-updated', { userId, longitude, latitude, userName });
+        // console.log(`Location updated for user ${userId}: [${longitude}, ${latitude}]`);
+
+    } catch (error) {
+        console.error('Error updating location:', error);
+    }
+});
+
+
+
+
+
 });
 
 httpServer.listen(port, () => {
