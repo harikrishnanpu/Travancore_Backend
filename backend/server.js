@@ -140,24 +140,12 @@ socket.on('update-location', async (data) => {
       throw new Error('Invalid coordinates');
     }
 
-    // Try to find and update the location
+    // Update the location or create it if it doesn't exist
     const updatedLocation = await Location.findOneAndUpdate(
-      { userId }, // Search by userId only
-      { name: userName, coordinates: [longitude, latitude] }, // Update fields
-      { new: true } // Return the newly updated document
+      { userId }, // Search by userId
+      { name: userName, coordinates: [longitude, latitude] }, // Update name and coordinates
+      { upsert: true, new: true } // If not found, create it (upsert)
     );
-
-    if (!updatedLocation) {
-      // If no location was found, create a new one
-      const newLocation = new Location({
-        name: userName,
-        coordinates: [longitude, latitude],
-        userId: userId,
-      });
-      await newLocation.save();
-
-      // Optionally: console.log(`New location created for user ${userId}`);
-    }
 
     // Broadcast the location update to all connected clients
     io.emit('location-updated', { userId, longitude, latitude, userName });
@@ -168,7 +156,6 @@ socket.on('update-location', async (data) => {
     console.error('Error updating location:', error);
   }
 });
-
 
 
 
