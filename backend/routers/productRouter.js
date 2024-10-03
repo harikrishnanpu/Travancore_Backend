@@ -4,13 +4,16 @@ import data from '../data.js';
 import Product from '../models/productModel.js';
 import User from '../models/userModel.js';
 import { isAdmin, isAuth, isSellerOrAdmin } from '../utils.js';
+import asyncHandler from 'express-async-handler';
+import Purchase from '../models/purchasemodals.js';
+
 
 const productRouter = express.Router();
 
 productRouter.get(
   '/',
   expressAsyncHandler(async (req, res) => {
-    const pageSize = 3;
+    const pageSize = 10;
     const page = Number(req.query.pageNumber) || 1;
     const name = req.query.name || '';
     const category = req.query.category || '';
@@ -45,6 +48,7 @@ productRouter.get(
       ...priceFilter,
       ...ratingFilter,
     });
+
     const products = await Product.find({
       ...sellerFilter,
       ...nameFilter,
@@ -56,9 +60,62 @@ productRouter.get(
       .sort(sortOrder)
       .skip(pageSize * (page - 1))
       .limit(pageSize);
-    res.send({ products, page, pages: Math.ceil(count / pageSize) });
+
+    res.send({ products, page, totalProducts: count , pages: Math.ceil(count / pageSize) });
   })
 );
+
+
+productRouter.get('/search', async (req, res) => {
+  const searchQuery = req.query.q || '';
+  try {
+    const products = await Product.find({
+      name: { $regex: searchQuery, $options: 'i' }, // Case-insensitive match
+    }).limit(10); // Limit the number of suggestions returned
+    res.status(200).json(products);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching products' });
+  }
+});
+
+// Route to get product by item ID
+productRouter.get('/itemId/:itemId', async (req, res) => {
+  try {
+    const product = await Product.findOne({ item_id: req.params.itemId });
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    res.status(200).json(product);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+productRouter.get('/search/itemId', async (req, res) => {
+  try {
+    const query = req.query.query;
+    // Regex to match item IDs starting with 'K' followed by 1 to 4 digits
+    const isItemId = /^K\d{1,4}$/.test(query);
+
+    let products;
+    
+    if (isItemId) {
+      // If the query is an item ID, find the specific product
+      products = await Product.find({ item_id: query }).limit(1);
+    } else {
+      // If the query is a name, perform a regex search
+      const regex = new RegExp(query, 'i');  // Case-insensitive regex search
+      products = await Product.find({ 
+        $or: [
+          { name: regex } 
+        ] 
+      }).limit(10); // Limit the number of suggestions
+    }
+
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error });
+  }
+});
+
 
 productRouter.get(
   '/categories',
@@ -110,6 +167,7 @@ productRouter.post(
   expressAsyncHandler(async (req, res) => {
     const product = new Product({
       name: 'sample name ' + Date.now(),
+      item_id: Date.now(),
       seller: req.user._id,
       image: '/images/p1.jpg',
       price: 0,
@@ -124,6 +182,7 @@ productRouter.post(
     res.send({ message: 'Product Created', product: createdProduct });
   })
 );
+
 productRouter.put(
   '/:id',
   isAuth,
@@ -139,6 +198,7 @@ productRouter.put(
       product.brand = req.body.brand;
       product.countInStock = req.body.countInStock;
       product.description = req.body.description;
+      product.item_id = req.body.itemId;
       const updatedProduct = await product.save();
       res.send({ message: 'Product Updated', product: updatedProduct });
     } else {
@@ -194,5 +254,62 @@ productRouter.post(
     }
   })
 );
+
+
+productRouter.post('/purchase', asyncHandler(async (req, res) => {
+
+
+  const { sellerName, sellerId, invoiceNo, items } = req.body;
+
+  try{
+
+  for (const item of items) {
+    const existingProduct = await Product.findOne({ item_id: item.itemId });
+
+    if (existingProduct) {
+      existingProduct.countInStock += parseInt(item.quantity);
+      await existingProduct.save();
+    } else {
+      const newProduct = new Product({
+        name: item.name,
+        item_id: item.itemId,
+        brand: item.brand,
+        category: item.category,
+        countInStock: item.quantity,
+        // Add other necessary fields here (e.g., description, price, etc.)
+      });
+      await newProduct.save();
+      console.log("product saved")
+    }
+  }
+
+  const purchase = new Purchase({
+    sellerName,
+    sellerId,
+    invoiceNo,
+    items,
+  });
+
+  const createdPurchase = await purchase.save();
+  res.status(201).json(createdPurchase);
+  }catch (error){
+    console.log(error)
+    res.status(500).json({message: "error occureed"})
+  }
+
+}));
+
+
+productRouter.get('/purchases/all',async (req,res) => {
+  console.log("HIII")
+  const allpurchases = await Purchase.find()
+  if(allpurchases){
+    res.status(200).json(allpurchases)
+  }else{
+    console.log("no bills")
+    res.status(500).json({message: "No Purchase Bills Available"})
+  }
+})
+
 
 export default productRouter;

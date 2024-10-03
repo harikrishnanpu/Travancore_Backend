@@ -8,8 +8,10 @@ import productRouter from './routers/productRouter.js';
 import userRouter from './routers/userRouter.js';
 import orderRouter from './routers/orderRouter.js';
 import uploadRouter from './routers/uploadRouter.js';
+import billingRouter from './routers/billingRouter.js';
 import cors from 'cors';
 import Location from './models/locationModel.js';
+import returnRouter from './routers/returnRouter.js';
 
 
 
@@ -20,11 +22,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
-mongoose.connect(process.env.MONGODB_URL || 'mongodb+srv://harikrishnan9a:qOvFm5duP3aTqXJ2@dhanyabuildersbackend.nz0as.mongodb.net/?retryWrites=true&w=majority&appName=dhanyabuildersBackend');
+mongoose.connect(process.env.MONGODB_URL || 'mongodb+srv://hari:123456780@kktradingbackend.ip6yq.mongodb.net/?retryWrites=true&w=majority&appName=KKTRADINGBACKEND');
 app.use('/api/uploads', uploadRouter);
 app.use('/api/users', userRouter);
 app.use('/api/products', productRouter);
 app.use('/api/orders', orderRouter);
+app.use('/api/billing', billingRouter); // Use the billing routes under the /api/billing path
+app.use('/api/returns',returnRouter)
 app.get('/api/config/paypal', (req, res) => {
   res.send(process.env.PAYPAL_CLIENT_ID || 'sb');
 });
