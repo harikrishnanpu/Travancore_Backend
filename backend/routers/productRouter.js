@@ -66,17 +66,36 @@ productRouter.get(
 );
 
 
-productRouter.get('/search', async (req, res) => {
+productRouter.get('/searchform/search', async (req, res) => {
   const searchQuery = req.query.q || '';
+
   try {
-    const products = await Product.find({
-      name: { $regex: searchQuery, $options: 'i' }, // Case-insensitive match
-    }).limit(10); // Limit the number of suggestions returned
+    let products;
+    
+    // Check if the search query matches the pattern for an item ID (starts with 'K' followed by numbers)
+    const isItemId = /^K\d+$/.test(searchQuery);
+
+    if (isItemId) {
+      // Search for the product by item ID
+      products = await Product.findOne({ item_id: searchQuery });
+      if (products) {
+        return res.status(200).json([products]); // Return the product as an array
+      } else {
+        return res.status(404).json({ message: 'Item not found' });
+      }
+    } else {
+      // If not an item ID, perform a case-insensitive search by product name
+      products = await Product.find({
+        name: { $regex: searchQuery, $options: 'i' },
+      }).limit(10); // Limit the number of suggestions
+    }
+
     res.status(200).json(products);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching products' });
   }
 });
+
 
 // Route to get product by item ID
 productRouter.get('/itemId/:itemId', async (req, res) => {
@@ -182,6 +201,17 @@ productRouter.post(
     res.send({ message: 'Product Created', product: createdProduct });
   })
 );
+
+
+// Update a product
+productRouter.put('/get-item/:id', async (req, res) => {
+  try {
+    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating product' });
+  }
+});
 
 productRouter.put(
   '/:id',
@@ -309,7 +339,53 @@ productRouter.get('/purchases/all',async (req,res) => {
     console.log("no bills")
     res.status(500).json({message: "No Purchase Bills Available"})
   }
-})
+});
+
+// Route to fetch all low-stock products
+productRouter.get('/all-items/low-stock', async (req, res) => {
+  try {
+    const products = await Product.find({ countInStock: { $lt: 10 } }).sort({ countInStock: 1 });
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching low-stock products', error });
+  }
+});
+
+// Route to fetch a limited number of low-stock products (e.g., for homepage)
+productRouter.get('/items/low-stock-limited', async (req, res) => {
+  try {
+    const products = await Product.find({ countInStock: { $lt: 10 } })
+      .sort({ countInStock: 1 })
+      // .limit(3); // Limit to 3 products
+
+    const outOfStockProducts = products.filter(product => product.countInStock == 0);
+    const lowStockProducts = products.filter(product => product.countInStock > 0);
+
+    // Combine them for the limited response
+    const sortedLimitedProducts = [...outOfStockProducts, ...lowStockProducts].slice(0, 1); // Limit to 3
+    res.json(sortedLimitedProducts);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching low-stock products', error });
+  }
+});
+
+
+productRouter.get('/low-stock/all', async (req, res) => {
+  try {
+    const products = await Product.find({ countInStock: { $lt: 10 } })
+      .sort({ countInStock: 1 })
+      // .limit(3); // Limit to 3 products
+
+    const outOfStockProducts = products.filter(product => product.countInStock == 0);
+    const lowStockProducts = products.filter(product => product.countInStock > -100);
+
+    // Combine them for the limited response
+    const sortedLimitedProducts = [...outOfStockProducts, ...lowStockProducts].slice(0,10) // Limit to 3
+    res.json(sortedLimitedProducts);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching low-stock products', error });
+  }
+});
 
 
 export default productRouter;

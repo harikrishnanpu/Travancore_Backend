@@ -37,15 +37,15 @@ billingRouter.post('/create', async (req, res) => {
             }
 
             // Log the fetched product for debugging
-            console.log('Fetched product:', product);
+            // console.log('Fetched product:', product);
 
             // Check if there is enough stock
-            if (product.countInStock < quantity) {
+            if (product.countInStock < parseInt(quantity)) {
                 return res.status(400).json({ message: `Insufficient stock for product ID ${itemId}` });
             }
 
             // Subtract the countInStock
-            product.countInStock -= quantity;
+            product.countInStock -= parseInt(quantity);
 
             // Push the product save promise to the array
             productUpdatePromises.push(product.save()); // Save the updated product
@@ -148,6 +148,46 @@ billingRouter.put("/driver/billings/:id", async (req, res) => {
     res.status(200).json(updatedBilling);
   } catch (error) {
     res.status(500).json({ message: "Error updating billing", error });
+  }
+});
+
+// Route to fetch a limited number of low-stock products (e.g., for homepage)
+billingRouter.get('/deliveries/expected-delivery', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set the time to the start of today (00:00:00)
+
+    const billings = await Billing.find({expectedDeliveryDate: { $gte: today },deliveryStatus: { $ne: 'Delivered' }}).sort({ expectedDeliveryDate: 1 }).limit(1); // Limit to 3 products
+    // console.log(billings)
+    res.json(billings);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching low-stock products', error });
+  }
+});
+
+billingRouter.get('/alldelivery/all', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set the time to the start of today (00:00:00)
+    const billings = await Billing.find({expectedDeliveryDate: {$gte: today}, deliveryStatus: { $ne: 'Delivered' }}).sort({ expectedDeliveryDate: 1 }) // Limit to 3 products
+    // console.log(billings)
+    res.json(billings);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching low-stock products', error });
+  }
+});
+
+
+billingRouter.get("/billing/suggestions", async (req, res) => {
+  try {
+    const { search = "" } = req.query;
+    const suggestions = await Billing.find({
+      invoiceNo: { $regex: search, $options: "i" }, // case-insensitive search for suggestions
+    }).limit(5); // Limit suggestions to 5
+
+    res.status(200).json(suggestions);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching suggestions" });
   }
 });
 

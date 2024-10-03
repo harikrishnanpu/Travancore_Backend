@@ -45,7 +45,7 @@ returnRouter.post('/create', async (req, res) => {
         }
   
         // Adjust countInStock (increase if product is returned)
-        updatedProduct.countInStock += product.quantity;
+        updatedProduct.countInStock += parseInt(product.quantity);
   
         await updatedProduct.save({ session });
       }
@@ -88,7 +88,7 @@ returnRouter.post('/damage/create', async (req, res) => {
       for (const damagedItem of damagedItems) {
         await Product.findOneAndUpdate(
           { item_id: damagedItem.item_id },
-          { $inc: { countInStock: -damagedItem.quantity } },
+          { $inc: { countInStock: -parseInt(damagedItem.quantity) } },
           { new: true }
         );
       }
