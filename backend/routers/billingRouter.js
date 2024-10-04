@@ -116,9 +116,10 @@ billingRouter.get('/:id', async (req, res) => {
   try {
     const billing = await Billing.findById(req.params.id);
     if (!billing) {
-      return res.status(404).json({ message: 'Billing not found' });
+      console.log("not found")
+      return res.status(500).json({ message: 'Billing not found' });
     }
-    res.json(billing);
+    res.status(200).json(billing);
   } catch (error) {
     console.error('Error fetching billing:', error);
     res.status(500).json({ message: 'Error fetching billing', error });

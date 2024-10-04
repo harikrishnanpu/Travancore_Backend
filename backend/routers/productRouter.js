@@ -297,6 +297,7 @@ productRouter.post('/purchase', asyncHandler(async (req, res) => {
     const existingProduct = await Product.findOne({ item_id: item.itemId });
 
     if (existingProduct) {
+      existingProduct.price = parseInt(item.price)
       existingProduct.countInStock += parseInt(item.quantity);
       await existingProduct.save();
     } else {

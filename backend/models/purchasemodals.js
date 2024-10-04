@@ -10,6 +10,9 @@ const purchaseSchema = new mongoose.Schema(
         itemId: { type: String, required: true },
         name: { type: String, required: true },
         quantity: { type: Number, required: true },
+        brand: {type: String, required: true},
+        category: {type: String, required: true},
+        price: {type: String, required: true}
       },
     ],
   },
