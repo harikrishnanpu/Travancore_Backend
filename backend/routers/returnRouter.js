@@ -110,6 +110,70 @@ returnRouter.get('/damage/getDamagedData', async (req, res) => {
       res.status(500).json({ message: 'Error retrieving damaged data.', error });
     }
   });
+
+
+  returnRouter.delete('/damage/delete/:id',async(req,res)=>{
+    try{
+      const damage = await Damage.findById(req.params.id)
+  
+      if (!damage) {
+        return res.status(404).json({ message: 'Purchase not found' });
+      }
+  
+      // Loop through each item in the purchase and update product stock
+      for (let item of damage.damagedItems) {
+        const product = await Product.findOne({item_id: item.item_id});
+  
+        if (product) {
+          // Reduce the countInStock by the quantity in the purchase
+          product.countInStock += parseInt(item.quantity)
+  
+          if (product.countInStock < 0) {
+            product.countInStock = 0; // Ensure stock doesn't go below zero
+          }
+  
+          await product.save();  // Save the updated product
+        }
+      }
+  
+      const deleteProduct = await damage.remove();
+      res.send({ message: 'Product Deleted', bill: deleteProduct });
+    }catch(error){
+      res.status(500).send({ message: 'Error Occured' });
+    }
+  })
+
+
+  returnRouter.delete('/return/delete/:id',async(req,res)=>{
+    try{
+      const ReturnEntry = await Return.findById(req.params.id)
+  
+      if (!ReturnEntry) {
+        return res.status(404).json({ message: 'Purchase not found' });
+      }
+  
+      // Loop through each item in the purchase and update product stock
+      for (let item of ReturnEntry.products) {
+        const product = await Product.findOne({item_id: item.item_id});
+  
+        if (product) {
+          // Reduce the countInStock by the quantity in the purchase
+          product.countInStock -= parseInt(item.quantity)
+  
+          if (product.countInStock < 0) {
+            product.countInStock = 0; // Ensure stock doesn't go below zero
+          }
+  
+          await product.save();  // Save the updated product
+        }
+      }
+  
+      const deleteProduct = await ReturnEntry.remove();
+      res.send({ message: 'Product Deleted', ReturnBill: deleteProduct });
+    }catch(error){
+      res.status(500).send({ message: 'Error Occured' });
+    }
+  })
   
 
 export default returnRouter;

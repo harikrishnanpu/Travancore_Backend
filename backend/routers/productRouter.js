@@ -330,9 +330,39 @@ productRouter.post('/purchase', asyncHandler(async (req, res) => {
 
 }));
 
+productRouter.delete('/purchases/delete/:id',async(req,res)=>{
+  try{
+    const purchase = await Purchase.findById(req.params.id)
+
+    if (!purchase) {
+      return res.status(404).json({ message: 'Purchase not found' });
+    }
+
+    // Loop through each item in the purchase and update product stock
+    for (let item of purchase.items) {
+      const product = await Product.findOne({item_id: item.itemId});
+
+      if (product) {
+        // Reduce the countInStock by the quantity in the purchase
+        product.countInStock -= parseInt(item.quantity)
+
+        if (product.countInStock < 0) {
+          product.countInStock = 0; // Ensure stock doesn't go below zero
+        }
+
+        await product.save();  // Save the updated product
+      }
+    }
+
+    const deleteProduct = await purchase.remove();
+    res.send({ message: 'Product Deleted', product: deleteProduct });
+  }catch(error){
+    res.status(500).send({ message: 'Error Occured' });
+  }
+})
+
 
 productRouter.get('/purchases/all',async (req,res) => {
-  console.log("HIII")
   const allpurchases = await Purchase.find()
   if(allpurchases){
     res.status(200).json(allpurchases)

@@ -6,6 +6,7 @@ import User from '../models/userModel.js';
 import { generateToken, isAdmin, isAuth } from '../utils.js';
 import AttendenceModel from '../models/attendenceModel.js';
 import Location from '../models/locationModel.js'
+import Billing from '../models/billingModal.js';
 
 const userRouter = express.Router();
 
@@ -302,6 +303,98 @@ userRouter.get('/location/users', async (req, res) => {
   }
 });
 
+
+// Update the start location
+userRouter.post("/billing/start-delivery", async (req, res) => {
+  try {
+    const { userId, driverName, invoiceNo, startLocation } = req.body;
+
+    // Check if the user already exists and update the start location
+    const location = await Location.findOneAndUpdate(
+      { userId }, // Match based on userId
+      { 
+        $set: {
+          driverName: driverName,
+          startLocation: startLocation,
+          invoiceNo, // Optionally update the invoice number
+        },
+      },
+      { upsert: true, new: true } // Create a new document if it doesn't exist
+    );
+
+
+        // Update the billing delivery and payment status
+        const billing = await Billing.findOne({ invoiceNo });
+        if (!billing) {
+          return res.status(404).json({ error: "Billing not found" });
+        }
+
+        billing.deliveryStatus = 'Transit-In';
+        await billing.save();
+
+
+    res.status(200).json({ message: "Start location saved successfully." , location});
+  } catch (error) {
+    console.error("Error saving start location:", error);
+    res.status(500).json({ error: "Failed to save start location." });
+  }
+});
+
+// Update the end location and mark as delivered
+userRouter.post("/billing/end-delivery", async (req, res) => {
+  try {
+    const { userId, invoiceNo, endLocation, deliveryStatus, paymentStatus } = req.body;
+
+    // Find and update the location with the new end location
+    const location = await Location.findOneAndUpdate(
+      { userId }, // Match based on userId
+      { 
+        $set: {
+          endLocation: endLocation,
+          invoiceNo,
+          deliveryStatus,
+          paymentStatus
+        },
+      },
+      { upsert: true, new: true } // Create a new document if it doesn't exist
+    );
+
+    // Update the billing delivery and payment status
+    const billing = await Billing.findOne({ invoiceNo });
+    if (!billing) {
+      return res.status(404).json({ error: "Billing not found" });
+    }
+
+    billing.deliveryStatus = deliveryStatus || billing.deliveryStatus;
+    billing.paymentStatus = paymentStatus || billing.paymentStatus;
+    await billing.save();
+
+    res.status(200).json({ message: "Delivery completed and statuses updated." });
+  } catch (error) {
+    console.error("Error saving end location:", error);
+    res.status(500).json({ error: "Failed to save end location." });
+  }
+});
+
+
+// API endpoint to fetch locations by invoice number
+userRouter.get('/locations/invoice/:invoiceNo', async (req, res) => {
+  try {
+    const invoiceNo = req.params.invoiceNo;
+
+    // Fetch all locations related to the invoice number
+    const locations = await Location.findOne({ invoiceNo });
+
+    if (!locations) {
+      return res.status(404).json({ message: 'No locations found for this invoice' });
+    }
+
+    res.json(locations);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error fetching locations' });
+  }
+});
 
 
 

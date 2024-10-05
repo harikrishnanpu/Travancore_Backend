@@ -79,6 +79,7 @@ billingRouter.post('/create', async (req, res) => {
 
 // Get all billings
 billingRouter.get('/', async (req, res) => {
+
   try {
     const billings = await Billing.find().sort({ expectedDeliveryDate: 1 });
     res.json(billings);
@@ -192,5 +193,36 @@ billingRouter.get("/billing/suggestions", async (req, res) => {
   }
 });
 
+
+billingRouter.delete('/billings/delete/:id',async(req,res)=>{
+  try{
+    const billing = await Billing.findById(req.params.id)
+
+    if (!billing) {
+      return res.status(404).json({ message: 'Purchase not found' });
+    }
+
+    // Loop through each item in the purchase and update product stock
+    for (let item of billing.products) {
+      const product = await Product.findOne({item_id: item.item_id});
+
+      if (product) {
+        // Reduce the countInStock by the quantity in the purchase
+        product.countInStock += parseInt(item.quantity)
+
+        if (product.countInStock < 0) {
+          product.countInStock = 0; // Ensure stock doesn't go below zero
+        }
+
+        await product.save();  // Save the updated product
+      }
+    }
+
+    const deleteProduct = await billing.remove();
+    res.send({ message: 'Product Deleted', bill: deleteProduct });
+  }catch(error){
+    res.status(500).send({ message: 'Error Occured' });
+  }
+})
 
 export default billingRouter;
