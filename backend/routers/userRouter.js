@@ -7,6 +7,10 @@ import { generateToken, isAdmin, isAuth } from '../utils.js';
 import AttendenceModel from '../models/attendenceModel.js';
 import Location from '../models/locationModel.js'
 import Billing from '../models/billingModal.js';
+import Return from '../models/returnModal.js';
+import Product from '../models/productModel.js';
+import Purchase from '../models/purchasemodals.js';
+import Damage from '../models/damageModal.js';
 
 const userRouter = express.Router();
 
@@ -190,6 +194,23 @@ userRouter.delete(
     }
   })
 );
+
+userRouter.get('/:id',
+  isAuth,
+  isAdmin,
+  expressAsyncHandler(async (req,res)=>{
+    try{
+      const user = await User.findById(req.params.id)
+      if(user){
+        res.json(user)
+      }else{
+        res.status(404).send({msg: "User Not Found"})
+      }
+    }catch(error){
+      res.statsu(500).send({msg: "Error Occured"})
+    }
+  })
+)
 
 userRouter.put(
   '/:id',
@@ -395,6 +416,27 @@ userRouter.get('/locations/invoice/:invoiceNo', async (req, res) => {
     res.status(500).json({ message: 'Error fetching locations' });
   }
 });
+
+
+
+userRouter.get('/summary/all', async (req,res)=>{
+  const Allusers = await User.count()
+  const AllBills = await Billing.count()
+  const AllReturns = await Return.count()
+  const AllProducts = await Product.count()
+  const AllPurchases = await Purchase.count()
+  const AllDamages = await Damage.count()
+  const bills = await Billing.find(); // Get all bills
+  const Billingsum = bills.reduce((sum, bill) => sum + bill.billingAmount, 0); // Calculate the sum
+
+  const summary = {users : Allusers ,bills : AllBills,returns: AllReturns,products: AllProducts,purchases: AllPurchases,damages: AllDamages,Billingsum: Billingsum, Allbills: bills}
+  if(summary){
+    res.json(summary)
+  }else{
+    res.status(500).send({msg:"error"})
+  }
+
+})
 
 
 

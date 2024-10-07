@@ -6,6 +6,7 @@ const BillingSchema = new mongoose.Schema({
   salesmanName: { type: String, required: true },
   expectedDeliveryDate: { type: Date, required: true },
   deliveryStatus: { type: String, required: true },
+  billingAmount: {type: String, require: true},
   paymentStatus: { type: String, required: true },
   customerName: { type: String, required: true },
   customerAddress: { type: String, required: true },

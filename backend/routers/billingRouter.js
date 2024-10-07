@@ -16,6 +16,7 @@ billingRouter.post('/create', async (req, res) => {
             expectedDeliveryDate,
             deliveryStatus,
             paymentStatus,
+            billingAmount,
             customerName,
             customerAddress,
             products, // This should be an array of objects with item_id and quantity
@@ -62,6 +63,7 @@ billingRouter.post('/create', async (req, res) => {
             customerName,
             customerAddress,
             products,
+            billingAmount
         });
 
         await billingData.save();
