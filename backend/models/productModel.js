@@ -9,6 +9,7 @@ const reviewSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, unique: true },
@@ -18,6 +19,13 @@ const productSchema = new mongoose.Schema(
     brand: { type: String, required: true },
     category: { type: String, required: true },
     description: { type: String},
+    pUnit: {type: String},
+    sUnit: {type: String},
+    psRatio: {type: String},
+    length: {type: String},
+    breadth: {type: String},
+    size: {type: String},
+    unit: {type: String},
     price: { type: Number},
     countInStock: { type: Number, required: true },
     rating: { type: Number,},
@@ -28,6 +36,7 @@ const productSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
 const Product = mongoose.model('Product', productSchema);
 
 export default Product;

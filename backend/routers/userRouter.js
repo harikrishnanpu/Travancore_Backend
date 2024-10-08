@@ -212,6 +212,21 @@ userRouter.get('/:id',
   })
 )
 
+userRouter.get('/user/:id',
+  expressAsyncHandler(async (req,res)=>{
+    try{
+      const user = await User.findById(req.params.id)
+      if(user){
+        res.json(user)
+      }else{
+        res.status(404).send({msg: "User Not Found"})
+      }
+    }catch(error){
+      res.statsu(500).send({msg: "Error Occured"})
+    }
+  })
+)
+
 userRouter.put(
   '/:id',
   isAuth,
@@ -427,7 +442,7 @@ userRouter.get('/summary/all', async (req,res)=>{
   const AllPurchases = await Purchase.count()
   const AllDamages = await Damage.count()
   const bills = await Billing.find(); // Get all bills
-  const Billingsum = bills.reduce((sum, bill) => sum + bill.billingAmount, 0); // Calculate the sum
+  const Billingsum = bills.reduce((sum, bill) => sum + parseInt(bill.billingAmount), 0); // Calculate the sum
 
   const summary = {users : Allusers ,bills : AllBills,returns: AllReturns,products: AllProducts,purchases: AllPurchases,damages: AllDamages,Billingsum: Billingsum, Allbills: bills}
   if(summary){
