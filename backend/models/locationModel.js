@@ -12,7 +12,7 @@ const locationSchema = new mongoose.Schema({
     coordinates: { type: [Number] }, // [longitude, latitude]
     timestamp: { type: Date }, // When delivery was completed
   },
-});
+},{  timestamps: true });
 
 const Location = mongoose.model("Location", locationSchema);
 export default Location;

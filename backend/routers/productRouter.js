@@ -15,22 +15,17 @@ productRouter.get(
   expressAsyncHandler(async (req, res) => {
     const pageSize = 10;
     const page = Number(req.query.pageNumber) || 1;
-    const name = req.query.name || '';
-    const category = req.query.category || '';
-    const seller = req.query.seller || '';
-    const order = req.query.order || '';
-    const min =
-      req.query.min && Number(req.query.min) !== 0 ? Number(req.query.min) : 0;
-    const max =
-      req.query.max && Number(req.query.max) !== 0 ? Number(req.query.max) : 0;
-    const rating =
-      req.query.rating && Number(req.query.rating) !== 0
-        ? Number(req.query.rating)
-        : 0;
+    const name = req.query.name ? req.query.name.toUpperCase() : '';
+    const category = req.query.category ? req.query.category.toUpperCase() : '';
+    const seller = req.query.seller ? req.query.seller.toUpperCase() : '';
+    const order = req.query.order ? req.query.order.toUpperCase() : '';
+    const min = req.query.min && Number(req.query.min) !== 0 ? Number(req.query.min) : 0;
+    const max = req.query.max && Number(req.query.max) !== 0 ? Number(req.query.max) : 0;
+    const rating = req.query.rating && Number(req.query.rating) !== 0 ? Number(req.query.rating) : 0;
 
     const nameFilter = name ? { name: { $regex: name, $options: 'i' } } : {};
-    const sellerFilter = seller ? { seller } : {};
     const categoryFilter = category ? { category } : {};
+    const sellerFilter = seller ? { seller } : {};
     const priceFilter = min && max ? { price: { $gte: min, $lte: max } } : {};
     const ratingFilter = rating ? { rating: { $gte: rating } } : {};
     const sortOrder =
@@ -41,33 +36,55 @@ productRouter.get(
         : order === 'toprated'
         ? { rating: -1 }
         : { _id: -1 };
-    const count = await Product.count({
-      ...sellerFilter,
-      ...nameFilter,
-      ...categoryFilter,
-      ...priceFilter,
-      ...ratingFilter,
-    });
 
-    const products = await Product.find({
-      ...sellerFilter,
-      ...nameFilter,
-      ...categoryFilter,
-      ...priceFilter,
-      ...ratingFilter,
-    })
-      .populate('seller', 'seller.name seller.logo')
-      .sort(sortOrder)
-      .skip(pageSize * (page - 1))
-      .limit(pageSize);
+    try {
+      let products;
+      let count = 0;
 
-    res.send({ products, page, totalProducts: count , pages: Math.ceil(count / pageSize) });
+      // Check if name is a valid item_id
+      if (name) {
+        const itemById = await Product.findOne({ item_id: name });
+        if (itemById) {
+          products = [itemById];
+          count = 1;
+        }
+      }
+
+      // If name is not an item_id, use regular filters
+      if (!products) {
+        count = await Product.countDocuments({
+          ...sellerFilter,
+          ...nameFilter,
+          ...categoryFilter,
+          ...priceFilter,
+          ...ratingFilter,
+        });
+
+        products = await Product.find({
+          ...sellerFilter,
+          ...nameFilter,
+          ...categoryFilter,
+          ...priceFilter,
+          ...ratingFilter,
+        })
+          .populate('seller', 'seller.name seller.logo')
+          .sort(sortOrder)
+          .skip(pageSize * (page - 1))
+          .limit(pageSize);
+      }
+
+      res.send({ products, page, totalProducts: count, pages: Math.ceil(count / pageSize) });
+    } catch (error) {
+      res.status(500).send({ message: error.message });
+    }
   })
 );
 
 
+
 productRouter.get('/searchform/search', async (req, res) => {
-  const searchQuery = req.query.q || '';
+  let searchQuery = req.query.q || '';
+  searchQuery = (req.query.q || "").replace(/\s+/g, "").toUpperCase();
 
   try {
     let products;
@@ -87,7 +104,7 @@ productRouter.get('/searchform/search', async (req, res) => {
       // If not an item ID, perform a case-insensitive search by product name
       products = await Product.find({
         name: { $regex: searchQuery, $options: 'i' },
-      }).limit(10); // Limit the number of suggestions
+      }).limit(5); // Limit the number of suggestions
     }
 
     res.status(200).json(products);
@@ -100,17 +117,32 @@ productRouter.get('/searchform/search', async (req, res) => {
 // Route to get product by item ID
 productRouter.get('/itemId/:itemId', async (req, res) => {
   try {
-    const product = await Product.findOne({ item_id: req.params.itemId });
-    if (!product) return res.status(404).json({ message: 'Product not found' });
+    const itemId = req.params.itemId.toUpperCase();
+
+    // Search for the product by item_id (case-insensitive)
+    let product = await Product.findOne({ item_id: itemId });
+
+    // If no product is found with item_id, search by name
+    if (!product) {
+      product = await Product.findOne({ name: { $regex: itemId, $options: 'i' } });
+    }
+
+    // If still no product is found, return a 404 error
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+
+    // Return the found product
     res.status(200).json(product);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
 });
 
+
 productRouter.get('/search/itemId', async (req, res) => {
   try {
-    const query = req.query.query;
+    const query = req.query.query.toUpperCase();
     // Regex to match item IDs starting with 'K' followed by 1 to 4 digits
     const isItemId = /^K\d{1,4}$/.test(query);
 
@@ -126,7 +158,7 @@ productRouter.get('/search/itemId', async (req, res) => {
         $or: [
           { name: regex } 
         ] 
-      }).limit(10); // Limit the number of suggestions
+      }).limit(8); // Limit the number of suggestions
     }
 
     res.json(products);
@@ -411,7 +443,7 @@ productRouter.get('/low-stock/all', async (req, res) => {
     const lowStockProducts = products.filter(product => product.countInStock > -100);
 
     // Combine them for the limited response
-    const sortedLimitedProducts = [...outOfStockProducts, ...lowStockProducts].slice(0,10) // Limit to 3
+    const sortedLimitedProducts = [...outOfStockProducts, ...lowStockProducts] // Limit to 3
     res.json(sortedLimitedProducts);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching low-stock products', error });

@@ -434,25 +434,6 @@ userRouter.get('/locations/invoice/:invoiceNo', async (req, res) => {
 
 
 
-userRouter.get('/summary/all', async (req,res)=>{
-  const Allusers = await User.count()
-  const AllBills = await Billing.count()
-  const AllReturns = await Return.count()
-  const AllProducts = await Product.count()
-  const AllPurchases = await Purchase.count()
-  const AllDamages = await Damage.count()
-  const bills = await Billing.find(); // Get all bills
-  const Billingsum = bills.reduce((sum, bill) => sum + parseInt(bill.billingAmount), 0); // Calculate the sum
-
-  const summary = {users : Allusers ,bills : AllBills,returns: AllReturns,products: AllProducts,purchases: AllPurchases,damages: AllDamages,Billingsum: Billingsum, Allbills: bills}
-  if(summary){
-    res.json(summary)
-  }else{
-    res.status(500).send({msg:"error"})
-  }
-
-})
-
 
 
 export default userRouter;

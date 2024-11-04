@@ -79,6 +79,112 @@ billingRouter.post('/create', async (req, res) => {
 });
 
 
+
+billingRouter.post('/edit/:id', async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    const {
+      invoiceNo,
+      invoiceDate,
+      salesmanName,
+      expectedDeliveryDate,
+      billingAmount,
+      customerName,
+      customerAddress,
+      products,
+    } = req.body;
+
+    const existingBilling = await Billing.findById(id);
+    if (!existingBilling) {
+      return res.status(404).json({ message: 'Billing record not found' });
+    }
+
+    const productUpdatePromises = [];
+
+    for (const item of products) {
+      const itemId = item.item_id;
+      const newQuantity = parseInt(item.quantity);
+
+      const product = await Product.findOne({ item_id: itemId });
+      if (!product) {
+        return res.status(404).json({ message: `Product with ID ${itemId} not found` });
+      }
+
+      const existingProduct = existingBilling.products.find(
+        (p) => p.item_id === itemId
+      );
+      const previousQuantity = existingProduct ? parseInt(existingProduct.quantity) : 0;
+
+      if (newQuantity === 0) {
+        // Update stock count by adding back the previous quantity to countInStock
+        const newStockCount = product.countInStock + previousQuantity;
+        product.countInStock = newStockCount;
+      
+        // Save the updated product stock
+        productUpdatePromises.push(product.save());
+      
+        // Remove the product from the billing document
+        await Billing.updateOne({ _id: id }, { $pull: { products: { item_id: itemId } } });
+      } else {
+        const quantityDifference = newQuantity - previousQuantity;
+        const newStockCount = product.countInStock - quantityDifference;
+
+        if (newStockCount < 0) {
+          return res.status(400).json({
+            message: `Insufficient stock for product ID ${itemId}. Only ${product.countInStock + previousQuantity} available.`,
+          });
+        }
+
+        product.countInStock = newStockCount;
+        productUpdatePromises.push(product.save());
+
+        if (existingProduct) {
+          await Billing.updateOne(
+            { _id: id, 'products.item_id': itemId },
+            { $set: { 'products.$.quantity': newQuantity } }
+          );
+        } else {
+          // Add new product to the billing record if it doesn't exist
+          existingBilling.products.push({
+            item_id: itemId,
+            name: product.name,
+            price: product.price,
+            quantity: newQuantity,
+            category: product.category,
+            brand: product.brand
+          });
+        }
+      }
+    }
+
+    await Promise.all(productUpdatePromises);
+    await existingBilling.save(); // Save changes to `existingBilling.products`
+
+    await Billing.findByIdAndUpdate(
+      id,
+      {
+        invoiceNo,
+        invoiceDate,
+        salesmanName,
+        expectedDeliveryDate,
+        billingAmount,
+        customerName,
+        customerAddress,
+      },
+      { new: true, useFindAndModify: false }
+    );
+
+    res.status(200).json({ message: 'Billing data updated successfully' });
+  } catch (error) {
+    console.error('Error updating billing data:', error);
+    res.status(500).json({ message: 'Error updating billing data', error: error.message });
+  }
+});
+
+
+
+
 // Get all billings
 billingRouter.get('/', async (req, res) => {
 
@@ -98,7 +204,7 @@ billingRouter.get('/driver/', async (req, res) => {
   try {
     const totalBillings = await Billing.countDocuments(); // Get total billing count
     const billings = await Billing.find()
-      .sort({ expectedDeliveryDate: 1 })
+      .sort({ invoiceDate: -1 })
       .skip((page - 1) * limit)
       .limit(limit);
 
@@ -113,6 +219,17 @@ billingRouter.get('/driver/', async (req, res) => {
     res.status(500).json({ message: "Error fetching billings" });
   }
 });
+
+
+billingRouter.get('/product/get-sold-out/:id',async (req,res)=>{
+  const itemId = req.params.id;
+    try {
+      const totalQuantity = await Billing.getTotalQuantitySold(itemId);
+      res.json(totalQuantity)
+    } catch (error) {
+      res.status(500).json({message: "ERROR OCCURED"})
+    }
+})
 
 // Get a billing by ID
 billingRouter.get('/:id', async (req, res) => {
@@ -184,9 +301,14 @@ billingRouter.get('/alldelivery/all', async (req, res) => {
 
 billingRouter.get("/billing/suggestions", async (req, res) => {
   try {
-    const { search = "" } = req.query;
+    let { search = "" } = req.query;
+     search = (req.query.search || "").replace(/\s+/g, "").toUpperCase();
+    // Search both `invoiceNo` and `customerName` fields
     const suggestions = await Billing.find({
-      invoiceNo: { $regex: search, $options: "i" }, // case-insensitive search for suggestions
+      $or: [
+        { invoiceNo: { $regex: search, $options: "i" } },
+        { customerName: { $regex: search, $options: "i" } }
+      ]
     }).limit(5); // Limit suggestions to 5
 
     res.status(200).json(suggestions);
@@ -194,6 +316,7 @@ billingRouter.get("/billing/suggestions", async (req, res) => {
     res.status(500).json({ message: "Error fetching suggestions" });
   }
 });
+
 
 
 billingRouter.delete('/billings/delete/:id',async(req,res)=>{

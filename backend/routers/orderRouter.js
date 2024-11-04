@@ -1,6 +1,9 @@
 import express from 'express';
 import expressAsyncHandler from 'express-async-handler';
 import Order from '../models/orderModel.js';
+import Billing from '../models/billingModal.js';
+import Return from '../models/returnModal.js';
+import Damage from '../models/damageModal.js';
 import User from '../models/userModel.js';
 import Product from '../models/productModel.js';
 import {
@@ -10,6 +13,7 @@ import {
   mailgun,
   payOrderEmailTemplate,
 } from '../utils.js';
+import Purchase from '../models/purchasemodals.js';
 
 const orderRouter = express.Router();
 orderRouter.get(
@@ -27,6 +31,125 @@ orderRouter.get(
     res.send(orders);
   })
 );
+
+
+// orderRouter.get('/:id', async (req, res) => {
+//   try {
+//     const purchase = await Purchase.findById(req.params.id);
+//     if (!purchase) {
+//       console.log("not found")
+//       return res.status(500).json({ message: 'Billing not found' });
+//     }
+//     res.status(200).json(purchase);
+//   } catch (error) {
+//     console.error('Error fetching purchase:', error);
+//     res.status(500).json({ message: 'Error fetching purchase', error });
+//   }
+// });
+
+orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) => {
+  const { purchaseId } = req.params;
+  const { sellerName, sellerId, invoiceNo, items } = req.body;
+
+  try {
+    // Find the existing purchase
+    const existingPurchase = await Purchase.findById(purchaseId);
+    if (!existingPurchase) {
+      return res.status(404).json({ message: "Purchase not found" });
+    }
+
+    // Create a map of old item quantities for easy lookup
+    const oldItemMap = new Map();
+    for (const item of existingPurchase.items) {
+      oldItemMap.set(item.itemId, item.quantity);
+    }
+
+    // Iterate over the new items to adjust stock values accordingly
+    for (const item of items) {
+      const product = await Product.findOne({ item_id: item.itemId });
+
+      if (product) {
+        const oldQuantity = oldItemMap.get(item.itemId) || 0; // Default to 0 if item wasn't in the old purchase
+        const newQuantity = parseInt(item.quantity);
+
+        if (newQuantity === 0) {
+          // If the new quantity is 0, restore the stock by the old quantity
+          product.countInStock -= oldQuantity;
+
+          // Remove the item from the purchase
+          await Purchase.updateOne(
+            { _id: purchaseId },
+            { $pull: { items: { itemId: item.itemId } } }
+          );
+        } else {
+          // If the new quantity is greater than the old, increase stock
+          if (newQuantity > oldQuantity) {
+            const quantityDifference = newQuantity - oldQuantity;
+            product.countInStock += quantityDifference; 
+          } else if (newQuantity < oldQuantity) {
+            // If the new quantity is less, increase stock
+            const quantityDifference = oldQuantity - newQuantity;
+            product.countInStock -= quantityDifference; 
+          }
+
+          // Ensure stock is not negative
+          if (product.countInStock < 0) {
+            throw new Error(`Insufficient stock for product: ${product.name}`);
+          }
+
+          // Update product price
+          product.price = parseInt(item.price);
+        }
+
+        // Save the updated product stock
+        await product.save();
+      } else {
+        // If the product doesn't exist in the database
+        return res.status(400).json({ message: `Product with item_id ${item.itemId} not found` });
+      }
+    }
+
+    // Filter out items with zero quantity for the updated items list
+    const updatedItems = items.filter(item => item.quantity > 0);
+
+    // Update the existing purchase with the new data
+    existingPurchase.sellerName = sellerName;
+    existingPurchase.sellerId = sellerId;
+    existingPurchase.invoiceNo = invoiceNo;
+    existingPurchase.items = updatedItems;
+
+    const updatedPurchase = await existingPurchase.save();
+    res.status(200).json(updatedPurchase);
+
+  } catch (error) {
+    console.error("Error occurred:", error);
+    res.status(500).json({ message: "An error occurred", error: error.message });
+  }
+}));
+
+
+
+
+// Route to get purchase number suggestions
+orderRouter.get("/purchase/suggestions", async (req, res) => {
+  try {
+    let { search = "" } = req.query;
+     search = (req.query.search || "").replace(/\s+/g, "").toUpperCase();
+    // Search both `invoiceNo` and `customerName` fields
+    const suggestions = await Purchase.find({
+      $or: [
+        { invoiceNo: { $regex: search, $options: "i" } },
+        { sellerName: { $regex: search, $options: "i" } }
+      ]
+    }).limit(5); // Limit suggestions to 5
+
+    res.status(200).json(suggestions);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching suggestions" });
+  }
+});
+
+
 
 orderRouter.get(
   '/summary',
@@ -107,18 +230,18 @@ orderRouter.post(
   })
 );
 
-orderRouter.get(
-  '/:id',
-  isAuth,
-  expressAsyncHandler(async (req, res) => {
-    const order = await Order.findById(req.params.id);
-    if (order) {
-      res.send(order);
-    } else {
-      res.status(404).send({ message: 'Order Not Found' });
-    }
-  })
-);
+// orderRouter.get(
+//   '/:id',
+//   isAuth,
+//   expressAsyncHandler(async (req, res) => {
+//     const order = await Order.findById(req.params.id);
+//     if (order) {
+//       res.send(order);
+//     } else {
+//       res.status(404).send({ message: 'Order Not Found' });
+//     }
+//   })
+// );
 
 orderRouter.put(
   '/:id/pay',
@@ -199,5 +322,26 @@ orderRouter.put(
     }
   })
 );
+
+
+orderRouter.get('/summary/all', async (req,res)=>{
+  const Allusers = await User.count()
+  const AllBills = await Billing.count()
+  const AllReturns = await Return.count()
+  const AllProducts = await Product.count()
+  const AllPurchases = await Purchase.count()
+  const AllDamages = await Damage.count()
+  const bills = await Billing.find(); // Get all bills
+  const Billingsum = bills.reduce((sum, bill) => sum + parseInt(bill.billingAmount), 0); // Calculate the sum
+
+  const outOfStock = await Product.countDocuments({ countInStock: 0 });
+  const summary = {users : Allusers ,bills : AllBills,returns: AllReturns,products: AllProducts,purchases: AllPurchases,damages: AllDamages,Billingsum: Billingsum, Allbills: bills,outOfStockProducts: outOfStock}
+  if(summary){
+    res.json(summary)
+  }else{
+    res.status(500).send({msg:"error"})
+  }
+
+})
 
 export default orderRouter;
