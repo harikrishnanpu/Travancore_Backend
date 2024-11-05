@@ -3,9 +3,10 @@ import expressAsyncHandler from 'express-async-handler';
 import data from '../data.js';
 import Product from '../models/productModel.js';
 import User from '../models/userModel.js';
-import { isAdmin, isAuth, isSellerOrAdmin } from '../utils.js';
+import { isAdmin, isAuth } from '../utils.js';
 import asyncHandler from 'express-async-handler';
 import Purchase from '../models/purchasemodals.js';
+import Log from '../models/Logmodal.js';
 
 
 const productRouter = express.Router();
@@ -214,7 +215,6 @@ productRouter.get(
 productRouter.post(
   '/',
   isAuth,
-  isSellerOrAdmin,
   expressAsyncHandler(async (req, res) => {
     const product = new Product({
       name: 'Sample name ' + Date.now(),
@@ -248,7 +248,6 @@ productRouter.put('/get-item/:id', async (req, res) => {
 productRouter.put(
   '/:id',
   isAuth,
-  isSellerOrAdmin,
   expressAsyncHandler(async (req, res) => {
     const productId = req.params.id;
     const product = await Product.findById(productId);

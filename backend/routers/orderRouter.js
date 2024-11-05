@@ -14,8 +14,11 @@ import {
   payOrderEmailTemplate,
 } from '../utils.js';
 import Purchase from '../models/purchasemodals.js';
+import Log from '../models/Logmodal.js';
 
 const orderRouter = express.Router();
+
+
 orderRouter.get(
   '/',
   isAuth,
@@ -33,19 +36,19 @@ orderRouter.get(
 );
 
 
-// orderRouter.get('/:id', async (req, res) => {
-//   try {
-//     const purchase = await Purchase.findById(req.params.id);
-//     if (!purchase) {
-//       console.log("not found")
-//       return res.status(500).json({ message: 'Billing not found' });
-//     }
-//     res.status(200).json(purchase);
-//   } catch (error) {
-//     console.error('Error fetching purchase:', error);
-//     res.status(500).json({ message: 'Error fetching purchase', error });
-//   }
-// });
+orderRouter.get('/purchase/:id', async (req, res) => {
+  try {
+    const purchase = await Purchase.findById(req.params.id);
+    if (!purchase) {
+      console.log("not found")
+      return res.status(500).json({ message: 'Billing not found' });
+    }
+    res.status(200).json(purchase);
+  } catch (error) {
+    console.error('Error fetching purchase:', error);
+    res.status(500).json({ message: 'Error fetching purchase', error });
+  }
+});
 
 orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) => {
   const { purchaseId } = req.params;
@@ -104,13 +107,27 @@ orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) =>
         // Save the updated product stock
         await product.save();
       } else {
-        // If the product doesn't exist in the database
-        return res.status(400).json({ message: `Product with item_id ${item.itemId} not found` });
+          const newProduct = new Product({
+            name: item.name,
+            item_id: item.itemId,
+            brand: item.brand,
+            category: item.category,
+            countInStock: item.quantity,
+            // Add other necessary fields here (e.g., description, price, etc.)
+          });
+          await newProduct.save();
+          console.log("product saved")
       }
     }
 
     // Filter out items with zero quantity for the updated items list
     const updatedItems = items.filter(item => item.quantity > 0);
+
+    if (updatedItems.length === 0) {
+      // If no items left, delete the purchase
+      await Purchase.findByIdAndDelete(purchaseId);
+      return res.status(200).json({ message: "Purchase deleted as there were no items left" });
+    }
 
     // Update the existing purchase with the new data
     existingPurchase.sellerName = sellerName;
@@ -130,8 +147,9 @@ orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) =>
 
 
 
+
 // Route to get purchase number suggestions
-orderRouter.get("/purchase/suggestions", async (req, res) => {
+orderRouter.get("/suggestions/purchase/suggestions", async (req, res) => {
   try {
     let { search = "" } = req.query;
      search = (req.query.search || "").replace(/\s+/g, "").toUpperCase();

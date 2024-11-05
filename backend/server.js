@@ -13,8 +13,7 @@ import cors from 'cors';
 import Location from './models/locationModel.js';
 import returnRouter from './routers/returnRouter.js';
 import xlsx from 'xlsx'; // Use 'xlsx' import for ES modules
-
-
+import logMiddleware from './middleware.js';
 
 dotenv.config();
 
@@ -22,6 +21,8 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
+app.use(logMiddleware);
+
 
 mongoose.connect(process.env.MONGODB_URL || 'mongodb+srv://hari:123456780@kktradingbackend.ip6yq.mongodb.net/?retryWrites=true&w=majority&appName=KKTRADINGBACKEND');
 app.use('/api/uploads', uploadRouter);

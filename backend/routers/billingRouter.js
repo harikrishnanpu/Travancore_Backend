@@ -1,6 +1,7 @@
 import express from 'express';
 import Billing from '../models/billingModal.js';
 import Product from '../models/productModel.js';
+import Log from '../models/Logmodal.js';
 
 const billingRouter = express.Router();
 
@@ -186,16 +187,23 @@ billingRouter.post('/edit/:id', async (req, res) => {
 
 
 // Get all billings
-billingRouter.get('/', async (req, res) => {
+  billingRouter.get('/', async (req, res) => {
+    try {
+      // Fetch and sort billing records by createdAt field in descending order (newest first)
+      const billings = await Billing.find().sort({ createdAt: -1 });
+  
+      if (!billings) {
+        return res.status(404).json({ message: 'No billings found' });
+      }
+  
+      res.status(200).json(billings);
+    } catch (error) {
+      console.error('Error fetching billings:', error);
+      res.status(500).json({ message: 'Error fetching billings', error: error.message });
+    }
+  });
+  
 
-  try {
-    const billings = await Billing.find().sort({ expectedDeliveryDate: 1 });
-    res.json(billings);
-  } catch (error) {
-    console.error('Error fetching billings:', error);
-    res.status(500).json({ message: 'Error fetching billings', error });
-  }
-});
 
 billingRouter.get('/driver/', async (req, res) => {
   const page = parseInt(req.query.page) || 1; // Default to page 1

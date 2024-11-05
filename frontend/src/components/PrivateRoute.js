@@ -5,7 +5,8 @@ import { Navigate } from 'react-router-dom';
 const PrivateRoute = ({ children }) => {
   const userSignin = useSelector((state) => state.userSignin);
   const { userInfo } = userSignin;
-  return userInfo ? children : <Navigate to="/signin" />;
+  // return userInfo ? children : <Navigate to="/signin" />;
+  return null; // Replace with actual condition to check if user is authenticated
 };
 
 export default PrivateRoute;

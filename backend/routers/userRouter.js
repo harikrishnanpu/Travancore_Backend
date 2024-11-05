@@ -11,8 +11,10 @@ import Return from '../models/returnModal.js';
 import Product from '../models/productModel.js';
 import Purchase from '../models/purchasemodals.js';
 import Damage from '../models/damageModal.js';
+import Log from '../models/Logmodal.js';
 
 const userRouter = express.Router();
+
 
 userRouter.get(
   '/top-sellers',
@@ -196,8 +198,6 @@ userRouter.delete(
 );
 
 userRouter.get('/:id',
-  isAuth,
-  isAdmin,
   expressAsyncHandler(async (req,res)=>{
     try{
       const user = await User.findById(req.params.id)
@@ -207,7 +207,7 @@ userRouter.get('/:id',
         res.status(404).send({msg: "User Not Found"})
       }
     }catch(error){
-      res.statsu(500).send({msg: "Error Occured"})
+      res.status(500).send({msg: "Error Occured"})
     }
   })
 )
@@ -345,10 +345,10 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
   try {
     const { userId, driverName, invoiceNo, startLocation } = req.body;
 
-    // Check if the user already exists and update the start location
+    // Update or create a location document with userId, driverName, and startLocation
     const location = await Location.findOneAndUpdate(
       { userId }, // Match based on userId
-      { 
+      {
         $set: {
           driverName: driverName,
           startLocation: startLocation,
@@ -358,33 +358,40 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
       { upsert: true, new: true } // Create a new document if it doesn't exist
     );
 
+    // Update the billing delivery status
+    const billing = await Billing.findOneAndUpdate(
+      { invoiceNo },
+      { $set: { deliveryStatus: 'Transit-In' } },
+      { new: true } // Return the updated document
+    );
 
-        // Update the billing delivery and payment status
-        const billing = await Billing.findOne({ invoiceNo });
-        if (!billing) {
-          return res.status(404).json({ error: "Billing not found" });
-        }
+    if (!billing) {
+      return res.status(404).json({ error: "Billing not found" });
+    }
 
-        billing.deliveryStatus = 'Transit-In';
-        await billing.save();
-
-
-    res.status(200).json({ message: "Start location saved successfully." , location});
+    res.status(200).json({ message: "Start location and delivery status updated successfully.", location });
   } catch (error) {
-    console.error("Error saving start location:", error);
-    res.status(500).json({ error: "Failed to save start location." });
+    console.error("Error saving start location and updating delivery status:", error);
+    res.status(500).json({ error: "Failed to save start location and update delivery status." });
   }
 });
+
+
 
 // Update the end location and mark as delivered
 userRouter.post("/billing/end-delivery", async (req, res) => {
   try {
-    const { userId, invoiceNo, endLocation, deliveryStatus, paymentStatus } = req.body;
+    const { userId, invoiceNo, endLocation, deliveredProducts = [], deliveryStatus, paymentStatus, kmTravelled, fuelCharge, otherExpenses } = req.body;
+
+    // Check if required fields are provided
+    if (!userId || !invoiceNo || !endLocation) {
+      return res.status(400).json({ error: "userId, invoiceNo, and endLocation are required." });
+    }
 
     // Find and update the location with the new end location
     const location = await Location.findOneAndUpdate(
-      { userId }, // Match based on userId
-      { 
+      { userId },
+      {
         $set: {
           endLocation: endLocation,
           invoiceNo,
@@ -395,22 +402,83 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
       { upsert: true, new: true } // Create a new document if it doesn't exist
     );
 
-    // Update the billing delivery and payment status
+    if (!location) {
+      return res.status(500).json({ error: "Failed to update or create location." });
+    }
+
+    // Find the billing entry by invoice number
     const billing = await Billing.findOne({ invoiceNo });
     if (!billing) {
       return res.status(404).json({ error: "Billing not found" });
     }
 
-    billing.deliveryStatus = deliveryStatus || billing.deliveryStatus;
-    billing.paymentStatus = paymentStatus || billing.paymentStatus;
+    billing.kmTravelled = kmTravelled || "0";
+    billing.fuelCharge = fuelCharge || "0";
+    billing.otherExpenses = otherExpenses || "0";
+
+    // Update the delivery status for each product
+    billing.products.forEach((product) => {
+      product.deliveryStatus = deliveredProducts.includes(product.item_id) ? "Delivered" : "Pending";
+    });
+
+    // Check if all products have been delivered to update overall delivery status
+    const allDelivered = billing.products.every((product) => product.deliveryStatus === "Delivered");
+    billing.deliveryStatus = allDelivered ? "Delivered" : "Pending";
+
+    // Update payment status if provided
+    if (paymentStatus) {
+      billing.paymentStatus = paymentStatus;
+    }
+
+    // Save the updated billing
     await billing.save();
 
     res.status(200).json({ message: "Delivery completed and statuses updated." });
   } catch (error) {
     console.error("Error saving end location:", error);
-    res.status(500).json({ error: "Failed to save end location." });
+    res.status(500).json({ error: "Failed to complete delivery and update statuses." });
   }
 });
+
+
+
+userRouter.post("/billing/update-payment", async (req, res) => {
+  try {
+    const { invoiceNo, paymentAmount, paymentMethod, paymentStatus } = req.body;
+
+    // Find the billing record
+    const billing = await Billing.findOne({ invoiceNo });
+    if (!billing) {
+      return res.status(404).json({ error: "Billing not found" });
+    }
+
+    // Add the new payment to the payments array
+    billing.payments.push({
+      amount: paymentAmount,
+      method: paymentMethod,
+    });
+
+    // Calculate the total payments received
+    const totalPaymentsReceived = billing.payments.reduce((total, payment) => total + payment.amount, 0);
+
+    // Update payment status based on total payments
+    if (totalPaymentsReceived >= billing.billingAmount) {
+      billing.paymentStatus = "Paid";
+    } else if (totalPaymentsReceived > 0) {
+      billing.paymentStatus = "Partial";
+    } else {
+      billing.paymentStatus = "Pending";
+    }
+
+    await billing.save();
+
+    res.status(200).json({ message: "Payment updated successfully.", paymentStatus: billing.paymentStatus });
+  } catch (error) {
+    console.error("Error updating payment:", error);
+    res.status(500).json({ error: "Failed to update payment." });
+  }
+});
+
 
 
 // API endpoint to fetch locations by invoice number
@@ -431,6 +499,26 @@ userRouter.get('/locations/invoice/:invoiceNo', async (req, res) => {
     res.status(500).json({ message: 'Error fetching locations' });
   }
 });
+
+
+userRouter.get('/allusers/all', async (req, res) =>{
+  try{
+      const allUsers = await User.find()
+      res.status(200).json(allUsers)
+  }catch (error){
+      res.status(500).json({message: "Error Fetching"})
+  }
+});
+
+
+userRouter.get('/alllogs/all', async (req,res)=>{
+  try{
+      const allLogs = await Log.find().sort({createdAt: -1})
+      res.status(200).json(allLogs)
+  }catch (error){
+      res.status(500).json({message: "Error Fetching"})
+  }
+})
 
 
 

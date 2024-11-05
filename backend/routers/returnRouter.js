@@ -2,8 +2,8 @@ import express from "express";
 import Return from '../models/returnModal.js'
 import Product from "../models/productModel.js";
 import Damage from "../models/damageModal.js";
+import Log from "../models/Logmodal.js";
 const returnRouter = express.Router();
-
 
 
 returnRouter.get('/',async (req,res)=>{
@@ -112,36 +112,52 @@ returnRouter.get('/damage/getDamagedData', async (req, res) => {
   });
 
 
-  returnRouter.delete('/damage/delete/:id',async(req,res)=>{
-    try{
-      const damage = await Damage.findById(req.params.id)
+  returnRouter.delete('/damage/delete/:damageId/:itemId', async (req, res) => {
+    try {
+      const { damageId, itemId } = req.params;
+  
+      // Find the specific damage record by ID
+      const damage = await Damage.findById(damageId);
   
       if (!damage) {
-        return res.status(404).json({ message: 'Purchase not found' });
+        return res.status(404).json({ message: 'Damage record not found' });
       }
   
-      // Loop through each item in the purchase and update product stock
-      for (let item of damage.damagedItems) {
-        const product = await Product.findOne({item_id: item.item_id});
+      // Find the specific item within the damaged items array
+      const itemIndex = damage.damagedItems.findIndex(item => item.item_id === itemId);
   
-        if (product) {
-          // Reduce the countInStock by the quantity in the purchase
-          product.countInStock += parseInt(item.quantity)
-  
-          if (product.countInStock < 0) {
-            product.countInStock = 0; // Ensure stock doesn't go below zero
-          }
-  
-          await product.save();  // Save the updated product
-        }
+      if (itemIndex === -1) {
+        return res.status(404).json({ message: 'Item not found in the damage bill' });
       }
   
-      const deleteProduct = await damage.remove();
-      res.send({ message: 'Product Deleted', bill: deleteProduct });
-    }catch(error){
-      res.status(500).send({ message: 'Error Occured' });
+      const item = damage.damagedItems[itemIndex];
+  
+      // Update the product stock for the item
+      const product = await Product.findOne({ item_id: item.item_id });
+  
+      if (product) {
+        product.countInStock += parseInt(item.quantity);
+        await product.save();
+      }
+  
+      // Remove the specific item from the damaged items array
+      damage.damagedItems.splice(itemIndex, 1);
+  
+      // If there are no items left in the damage bill, remove the entire document
+      if (damage.damagedItems.length === 0) {
+        await damage.remove();
+        return res.send({ message: 'All items removed. Damage bill deleted.' });
+      }
+  
+      // Otherwise, save the updated damage document
+      await damage.save();
+      res.send({ message: 'Item removed from the damage bill', updatedDamage: damage });
+  
+    } catch (error) {
+      res.status(500).send({ message: 'Error occurred', error });
     }
-  })
+  });
+  
 
 
   returnRouter.delete('/return/delete/:id',async(req,res)=>{
