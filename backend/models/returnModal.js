@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const returnSchema = mongoose.Schema(
   
   {
-    returnNo: { type: String, required: true },
+    returnNo: { type: String, required: true , unique: true},
     billingNo: {type: String, required: true},
     returnDate: { type: Date, required: true },
     customerName: { type: String, required: true },

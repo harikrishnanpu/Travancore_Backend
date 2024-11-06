@@ -8,7 +8,7 @@ const returnRouter = express.Router();
 
 returnRouter.get('/',async (req,res)=>{
     try{
-        const allReturns = await Return.find()
+        const allReturns = await Return.find().sort({createdAt: -1});
         res.status(200).json(allReturns)
     }catch (error){
         res.status(500).json({message: "Error Fetching"})
@@ -17,52 +17,55 @@ returnRouter.get('/',async (req,res)=>{
 
 // Create new return
 returnRouter.post('/create', async (req, res) => {
-    const session = await Return.startSession();
-    session.startTransaction();
-    
-    try {
-      const { returnNo, selectedBillingNo, returnDate, customerName, customerAddress, products } = req.body;
-  
-      // Create new return
-      const newReturn = new Return({
-        returnNo,
-        billingNo: selectedBillingNo,
-        returnDate,
-        customerName,
-        customerAddress,
-        products,
-      });
-  
-      // Save the return
-      const savedReturn = await newReturn.save({ session });
-  
-      // Update countInStock for each product
-      for (const product of products) {
-        const updatedProduct = await Product.findOne({ item_id: product.item_id }).session(session);
-  
-        if (!updatedProduct) {
-          throw new Error(`Product with ID ${product.productId} not found`);
-        }
-  
-        // Adjust countInStock (increase if product is returned)
-        updatedProduct.countInStock += parseInt(product.quantity);
-  
-        await updatedProduct.save({ session });
+  const session = await Return.startSession();
+  session.startTransaction();
+
+  try {
+    const { returnNo, selectedBillingNo, returnDate, customerName, customerAddress, products } = req.body;
+
+    // Filter out products with quantity 0
+    const filteredProducts = products.filter((product) => product.quantity > 0);
+
+    // Create new return
+    const newReturn = new Return({
+      returnNo,
+      billingNo: selectedBillingNo,
+      returnDate,
+      customerName,
+      customerAddress,
+      products: filteredProducts,
+    });
+
+    // Save the return
+    const savedReturn = await newReturn.save({ session });
+
+    // Update countInStock for each product
+    for (const product of filteredProducts) {
+      const updatedProduct = await Product.findOne({ item_id: product.item_id }).session(session);
+
+      if (!updatedProduct) {
+        throw new Error(`Product with ID ${product.item_id} not found`);
       }
-  
-      // Commit the transaction
-      await session.commitTransaction();
-      session.endSession();
-  
-      res.json(savedReturn);
-    } catch (error) {
-      // Abort the transaction in case of an error
-      await session.abortTransaction();
-      session.endSession();
-  
-      res.status(500).json({ message: 'Error creating return or updating stock', error });
+
+      // Adjust countInStock (increase if product is returned)
+      updatedProduct.countInStock += parseInt(product.quantity);
+
+      await updatedProduct.save({ session });
     }
-  });
+
+    // Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json(savedReturn);
+  } catch (error) {
+    // Abort the transaction in case of an error
+    await session.abortTransaction();
+    session.endSession();
+
+    res.status(500).json({ message: 'Error creating return or updating stock', error });
+  }
+});
 
 
 
@@ -104,7 +107,7 @@ returnRouter.post('/damage/create', async (req, res) => {
   // GET /api/damage/getDamagedData
 returnRouter.get('/damage/getDamagedData', async (req, res) => {
     try {
-      const damagedData = await Damage.find(); // Fetches all damaged items from the DB
+      const damagedData = await Damage.find().sort({createdAt: -1}); // Fetches all damaged items from the DB
       res.json(damagedData);
     } catch (error) {
       res.status(500).json({ message: 'Error retrieving damaged data.', error });
@@ -189,7 +192,97 @@ returnRouter.get('/damage/getDamagedData', async (req, res) => {
     }catch(error){
       res.status(500).send({ message: 'Error Occured' });
     }
-  })
+  });
+
+
+
+  returnRouter.get('/lastreturn/id', async (req, res) => {
+    try {
+      const returnbill = await Return.findOne().sort({ createdAt: -1 });
+      res.json(returnbill.returnNo);
+    } catch (error) {
+      res.status(500).json({ message: 'Error fetching last order' });
+    }
+  });
+
+
+  // Get return suggestions
+  returnRouter.get('/api/returns/suggestions', async (req, res) => {
+    try {
+      const search = req.query.search;
+      const returns = await Return.find({ returnNo: { $regex: search, $options: 'i' } }).limit(10);
+      res.json(returns);
+    } catch (error) {
+      res.status(500).send('Error fetching return suggestions');
+    }
+  });
+  
+  // Get return details by Return No
+  returnRouter.get('/api/returns/details/:returnNo', async (req, res) => {
+    try {
+      const returnNo = req.params.returnNo;
+      const returnData = await Return.findOne({ returnNo: returnNo });
+      res.json(returnData);
+    } catch (error) {
+      res.status(500).send('Error fetching return details');
+    }
+  });
+  
+  // Update return details by Return No
+  returnRouter.put('/api/returns/update/:returnNo', async (req, res) => {
+    const session = await Return.startSession();
+    session.startTransaction();
+  
+    try {
+      const returnNo = req.params.returnNo;
+      const { returnDate, customerName, customerAddress, products } = req.body;
+  
+      // Filter out products with quantity 0
+      const filteredProducts = products.filter((product) => product.quantity > 0);
+  
+      // Update return details
+      const updatedReturn = await Return.findOneAndUpdate(
+        { returnNo: returnNo },
+        {
+          returnDate,
+          customerName,
+          customerAddress,
+          products: filteredProducts,
+        },
+        { new: true, session }
+      );
+  
+      if (!updatedReturn) {
+        throw new Error(`Return with No ${returnNo} not found`);
+      }
+  
+      // Update countInStock for each product
+      for (const product of filteredProducts) {
+        const updatedProduct = await Product.findOne({ item_id: product.item_id }).session(session);
+  
+        if (!updatedProduct) {
+          throw new Error(`Product with ID ${product.item_id} not found`);
+        }
+  
+        // Adjust countInStock (increase if product is returned)
+        updatedProduct.countInStock += parseInt(product.quantity);
+  
+        await updatedProduct.save({ session });
+      }
+  
+      // Commit the transaction
+      await session.commitTransaction();
+      session.endSession();
+  
+      res.json(updatedReturn);
+    } catch (error) {
+      // Abort the transaction in case of an error
+      await session.abortTransaction();
+      session.endSession();
+  
+      res.status(500).json({ message: 'Error updating return or updating stock', error });
+    }
+  });
   
 
 export default returnRouter;

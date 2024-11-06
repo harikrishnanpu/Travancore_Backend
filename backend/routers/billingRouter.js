@@ -356,6 +356,16 @@ billingRouter.delete('/billings/delete/:id',async(req,res)=>{
   }catch(error){
     res.status(500).send({ message: 'Error Occured' });
   }
-})
+});
+
+
+billingRouter.get('/lastOrder/id', async (req, res) => {
+  try {
+    const billing = await Billing.findOne().sort({ createdAt: -1 });
+    res.json(billing.invoiceNo);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching last order' });
+  }
+});
 
 export default billingRouter;

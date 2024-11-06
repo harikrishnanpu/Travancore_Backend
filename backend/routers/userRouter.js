@@ -520,6 +520,15 @@ userRouter.get('/alllogs/all', async (req,res)=>{
   }
 })
 
+userRouter.post('/alllogs/all', async (req,res)=>{
+  try{
+      const allLogs = await Log.deleteMany()
+      res.status(200).json(allLogs)
+  }catch (error){
+      res.status(500).json({message: "Error Fetching"})
+  }
+})
+
 
 
 

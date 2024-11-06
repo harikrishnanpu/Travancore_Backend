@@ -14,7 +14,7 @@ const productRouter = express.Router();
 productRouter.get(
   '/',
   expressAsyncHandler(async (req, res) => {
-    const pageSize = 10;
+    const pageSize = 20;
     const page = Number(req.query.pageNumber) || 1;
     const name = req.query.name ? req.query.name.toUpperCase() : '';
     const category = req.query.category ? req.query.category.toUpperCase() : '';
@@ -394,7 +394,7 @@ productRouter.delete('/purchases/delete/:id',async(req,res)=>{
 
 
 productRouter.get('/purchases/all',async (req,res) => {
-  const allpurchases = await Purchase.find()
+  const allpurchases = await Purchase.find().sort({ createdAt: -1});
   if(allpurchases){
     res.status(200).json(allpurchases)
   }else{
@@ -402,6 +402,7 @@ productRouter.get('/purchases/all',async (req,res) => {
     res.status(500).json({message: "No Purchase Bills Available"})
   }
 });
+
 
 // Route to fetch all low-stock products
 productRouter.get('/all-items/low-stock', async (req, res) => {
