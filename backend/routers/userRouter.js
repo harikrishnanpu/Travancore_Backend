@@ -381,7 +381,7 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
 // Update the end location and mark as delivered
 userRouter.post("/billing/end-delivery", async (req, res) => {
   try {
-    const { userId, invoiceNo, endLocation, deliveredProducts = [], deliveryStatus, paymentStatus, kmTravelled, fuelCharge, otherExpenses } = req.body;
+    const { userId, invoiceNo, endLocation, deliveredProducts = [], deliveryStatus, paymentStatus, kmTravelled, fuelCharge, otherExpenses, startingKm, endKm } = req.body;
 
     // Check if required fields are provided
     if (!userId || !invoiceNo || !endLocation) {
@@ -412,9 +412,11 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
       return res.status(404).json({ error: "Billing not found" });
     }
 
-    billing.kmTravelled = kmTravelled || "0";
-    billing.fuelCharge = fuelCharge || "0";
-    billing.otherExpenses = otherExpenses || "0";
+    billing.kmTravelled = parseInt(kmTravelled) + parseInt(billing.kmTravelled) || billing.kmTravelled;
+    billing.startingKm = parseFloat(startingKm) + parseFloat(billing.startingKm) || parseFloat(billing.startingKm);
+    billing.endKm = parseFloat(endKm) + parseFloat(billing.endKm) || parseFloat(billing.endKm);
+    billing.fuelCharge = parseFloat(fuelCharge) + parseFloat(billing.fuelCharge) || parseFloat(billing.fuelCharge);
+    billing.otherExpenses = parseFloat(otherExpenses) + parseFloat(billing.otherExpenses) || parseFloat(billing.otherExpenses);
 
     // Update the delivery status for each product
     billing.products.forEach((product) => {
@@ -486,6 +488,7 @@ userRouter.get('/locations/invoice/:invoiceNo', async (req, res) => {
   try {
     const invoiceNo = req.params.invoiceNo;
 
+    console.log(invoiceNo);
     // Fetch all locations related to the invoice number
     const locations = await Location.findOne({ invoiceNo });
 

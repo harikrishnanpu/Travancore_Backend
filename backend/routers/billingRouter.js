@@ -244,6 +244,20 @@ billingRouter.get('/:id', async (req, res) => {
   try {
     const billing = await Billing.findById(req.params.id);
     if (!billing) {
+      return res.status(500).json({ message: 'Billing not found' });
+    }
+    res.status(200).json(billing);
+  } catch (error) {
+    console.error('Error fetching billing:', error);
+    res.status(500).json({ message: 'Error fetching billing', error });
+  }
+});
+
+
+billingRouter.get('/getinvoice/:id', async (req, res) => {
+  try {
+    const billing = await Billing.findOne({invoiceNo: req.params.id});
+    if (!billing) {
       console.log("not found")
       return res.status(500).json({ message: 'Billing not found' });
     }
@@ -310,8 +324,9 @@ billingRouter.get('/alldelivery/all', async (req, res) => {
 billingRouter.get("/billing/suggestions", async (req, res) => {
   try {
     let { search = "" } = req.query;
-     search = (req.query.search || "").replace(/\s+/g, "").toUpperCase();
-    // Search both `invoiceNo` and `customerName` fields
+    search = search.replace(/\s+/g, "").toUpperCase(); // Normalize the search term
+
+    // Search both `invoiceNo` and `customerName` fields with case insensitive regex
     const suggestions = await Billing.find({
       $or: [
         { invoiceNo: { $regex: search, $options: "i" } },
@@ -321,9 +336,11 @@ billingRouter.get("/billing/suggestions", async (req, res) => {
 
     res.status(200).json(suggestions);
   } catch (error) {
+    console.error("Error fetching suggestions:", error); // Log the error for debugging
     res.status(500).json({ message: "Error fetching suggestions" });
   }
 });
+
 
 
 
@@ -367,5 +384,32 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
     res.status(500).json({ message: 'Error fetching last order' });
   }
 });
+
+
+billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { fuelCharge, otherExpenses } = req.body;
+
+    // Find the billing document by ID
+    const billing = await Billing.findById(id);
+    if (!billing) {
+      return res.status(404).json({ message: "Billing not found" });
+    }
+
+    // Update the billing document with new expenses
+    billing.fuelCharge = parseFloat(billing.fuelCharge) + parseFloat(fuelCharge || 0);
+    billing.otherExpenses = parseFloat(billing.otherExpenses) + parseFloat(otherExpenses || 0);
+
+    // Save the updated document
+    await billing.save();
+
+    res.status(200).json({ message: "Expenses added successfully", billing });
+  } catch (error) {
+    console.error("Error adding expenses:", error);
+    res.status(500).json({ message: "Error adding expenses" });
+  }
+});
+
 
 export default billingRouter;

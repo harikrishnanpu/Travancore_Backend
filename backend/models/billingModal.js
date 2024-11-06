@@ -11,6 +11,8 @@ const BillingSchema = new mongoose.Schema({
   customerName: { type: String, required: true },
   customerAddress: { type: String, required: true },
   kmTravelled: { type: String, required: true, default: "0"},
+  startingKm: { type: String, required: true, default: "0"},
+  endKm: { type: String, required: true, default: "0"},
   fuelCharge: { type: String, required: true, default: "0"},
   otherExpenses: { type: String, required: true, default: "0"},
   products: [
