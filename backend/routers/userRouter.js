@@ -345,23 +345,33 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
   try {
     const { userId, driverName, invoiceNo, startLocation } = req.body;
 
+    // Ensure all required fields are present
+    if (!userId || !driverName || !invoiceNo || !startLocation) {
+      return res.status(400).json({ error: "All fields are required." });
+    }
+
+
     // Update or create a location document with userId, driverName, and startLocation
     const location = await Location.findOneAndUpdate(
       { userId }, // Match based on userId
       {
         $set: {
-          driverName: driverName,
-          startLocation: startLocation,
+          driverName, 
+          startLocation, 
           invoiceNo, // Optionally update the invoice number
-        },
+        }
       },
       { upsert: true, new: true } // Create a new document if it doesn't exist
     );
 
+    if (!location) {
+      return res.status(500).json({ error: "Failed to update or create location." });
+    }
+
     // Update the billing delivery status
     const billing = await Billing.findOneAndUpdate(
       { invoiceNo },
-      { $set: { deliveryStatus: 'Transit-In' } },
+      { $set: { deliveryStatus: "Transit-In" } },
       { new: true } // Return the updated document
     );
 
@@ -369,12 +379,17 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
       return res.status(404).json({ error: "Billing not found" });
     }
 
-    res.status(200).json({ message: "Start location and delivery status updated successfully.", location });
+    res.status(200).json({
+      message: "Start location and delivery status updated successfully.",
+      location,
+    });
   } catch (error) {
     console.error("Error saving start location and updating delivery status:", error);
     res.status(500).json({ error: "Failed to save start location and update delivery status." });
   }
+
 });
+
 
 
 

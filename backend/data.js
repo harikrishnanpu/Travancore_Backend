@@ -25289,25 +25289,6 @@ const data = {
       "unit": "FT"
     },
     {
-      "name": "SHREEM 5240 2X2 PUNCH SEREIS STANZA",
-      "item_id": "K1454",
-      "category": "TILES",
-      "image": "/image/",
-      "price": null,
-      "countInStock": 113,
-      "brand": "SHREEM",
-      "rating": 0,
-      "numReviews": 0,
-      "description": "high quality product",
-      "pUnit": "BOX",
-      "sUnit": "NOS",
-      "psRatio": 4,
-      "length": 2,
-      "breadth": 2,
-      "size": "2X2",
-      "unit": "FT"
-    },
-    {
       "name": "SHREEM 5240 2X2 PUNCH SERIES STANZA",
       "item_id": "K1454",
       "category": "TILES",
