@@ -389,7 +389,7 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
 billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
   try {
     const { id } = req.params;
-    const { fuelCharge, otherExpenses } = req.body;
+    const { fuelCharge = 0, otherExpenses = [] } = req.body;
 
     // Find the billing document by ID
     const billing = await Billing.findById(id);
@@ -397,9 +397,26 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
       return res.status(404).json({ message: "Billing not found" });
     }
 
-    // Update the billing document with new expenses
+    // Update fuelCharge by adding the new value to the existing one
     billing.fuelCharge = parseFloat(billing.fuelCharge) + parseFloat(fuelCharge || 0);
-    billing.otherExpenses = parseFloat(billing.otherExpenses) + parseFloat(otherExpenses || 0);
+
+    // Validate and filter otherExpenses to include only entries with a positive amount
+    const validOtherExpenses = Array.isArray(otherExpenses)
+      ? otherExpenses.filter(expense => 
+          typeof expense === "object" && 
+          expense !== null && 
+          typeof expense.amount === "number" && 
+          expense.amount > 0
+        )
+      : [];
+
+    // Append valid otherExpenses to the billing document
+    if (validOtherExpenses.length > 0) {
+      billing.otherExpenses.push(...validOtherExpenses.map(expense => ({
+        amount: parseFloat(expense.amount),
+        remark: expense.remark || ""
+      })));
+    }
 
     // Save the updated document
     await billing.save();
@@ -410,6 +427,7 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
     res.status(500).json({ message: "Error adding expenses" });
   }
 });
+
 
 
 export default billingRouter;

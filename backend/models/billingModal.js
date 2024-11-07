@@ -5,16 +5,24 @@ const BillingSchema = new mongoose.Schema({
   invoiceDate: { type: Date, required: true },
   salesmanName: { type: String, required: true },
   expectedDeliveryDate: { type: Date, required: true },
-  deliveryStatus: { type: String, required: true },
-  billingAmount: { type: String, required: true },
-  paymentStatus: { type: String, required: true },
+  deliveryStatus: { type: String, default: "Pending" },
+  billingAmount: { type: Number, required: true },
+  billingAmountReceived: { type: Number, default: 0 },
+  paymentStatus: { type: String, required: true, default: "Unpaid" },
   customerName: { type: String, required: true },
   customerAddress: { type: String, required: true },
-  kmTravelled: { type: String, required: true, default: "0"},
-  startingKm: { type: String, required: true, default: "0"},
-  endKm: { type: String, required: true, default: "0"},
-  fuelCharge: { type: String, required: true, default: "0"},
-  otherExpenses: { type: String, required: true, default: "0"},
+  customerContactNumber: { type: String },
+  kmTravelled: { type: Number, default: 0 },
+  startingKm: { type: Number, default: 0 },
+  endKm: { type: Number, default: 0 },
+  fuelCharge: { type: Number, default: 0 },
+  otherExpenses: [
+    {
+      amount: { type: Number},
+      remark: { type: String},
+      date: { type: Date, default: Date.now },
+    },
+  ],
   products: [
     {
       item_id: { type: String, required: true },
@@ -23,7 +31,7 @@ const BillingSchema = new mongoose.Schema({
       category: { type: String, required: true },
       brand: { type: String, required: true },
       quantity: { type: Number, required: true },
-      deliveryStatus: { type: String, default: "Pending" }, // New field to track delivery status of each product
+      deliveryStatus: { type: String, default: "Pending" },
     },
   ],
   payments: [
@@ -33,46 +41,56 @@ const BillingSchema = new mongoose.Schema({
       date: { type: Date, default: Date.now },
     },
   ],
+  notes: { type: String },
 }, { timestamps: true });
 
-// Add static method to calculate total quantity sold
+// Virtual field for calculating total other expenses
+BillingSchema.virtual("totalOtherExpenses").get(function () {
+  return this.otherExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
+});
+
+// Static method to calculate total quantity sold
 BillingSchema.statics.getTotalQuantitySold = async function (itemId) {
   const result = await this.aggregate([
-    { $unwind: "$products" }, // Unwind the products array to access each product individually
-    { $match: { "products.item_id": itemId } }, // Match only documents with the specified item_id
+    { $unwind: "$products" },
+    { $match: { "products.item_id": itemId } },
     {
       $group: {
         _id: "$products.item_id",
-        totalQuantity: { $sum: "$products.quantity" }, // Sum up the quantity for the specified item_id
+        totalQuantity: { $sum: "$products.quantity" },
       },
     },
   ]);
-
-  // Return the total quantity or 0 if the item has no sales
   return result[0] ? result[0].totalQuantity : 0;
 };
 
-// Add method to update delivery status based on product statuses
+// Method to update delivery status based on product statuses
 BillingSchema.methods.updateDeliveryStatus = async function () {
   const allDelivered = this.products.every(product => product.deliveryStatus === "Delivered");
-  this.deliveryStatus = allDelivered ? "Delivered" : "Pending";
+  const someDelivered = this.products.some(product => product.deliveryStatus === "Delivered");
+  
+  this.deliveryStatus = allDelivered ? "Delivered" : someDelivered ? "Partially Delivered" : "Pending";
   await this.save();
 };
 
-// Add method to add payment and update payment status
-BillingSchema.methods.addPayment = async function (amount) {
-  const currentAmount = parseFloat(this.billingAmountReceived || 0);
-  const updatedAmount = currentAmount + parseFloat(amount);
-  this.billingAmountReceived = updatedAmount;
+// Method to add payment and update payment status
+BillingSchema.methods.addPayment = async function (amount, method) {
+  if (amount <= 0) {
+    throw new Error("Payment amount must be greater than zero.");
+  }
 
-  if (updatedAmount >= parseFloat(this.billingAmount)) {
+  this.billingAmountReceived += parseFloat(amount);
+  this.payments.push({ amount: parseFloat(amount), method });
+
+  if (this.billingAmountReceived >= this.billingAmount) {
     this.paymentStatus = "Paid";
   } else {
     this.paymentStatus = "Partial";
   }
+  
   await this.save();
 };
 
-const Billing = mongoose.model('Billing', BillingSchema);
+const Billing = mongoose.model("Billing", BillingSchema);
 
 export default Billing;

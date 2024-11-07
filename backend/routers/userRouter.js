@@ -381,25 +381,49 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
 // Update the end location and mark as delivered
 userRouter.post("/billing/end-delivery", async (req, res) => {
   try {
-    const { userId, invoiceNo, endLocation, deliveredProducts = [], deliveryStatus, paymentStatus, kmTravelled, fuelCharge, otherExpenses, startingKm, endKm } = req.body;
+    const { 
+      userId, 
+      invoiceNo, 
+      endLocation, 
+      deliveredProducts = [], 
+      deliveryStatus, 
+      paymentStatus, 
+      kmTravelled = 0, 
+      fuelCharge = 0, 
+      otherExpenses = [], 
+      startingKm = 0, 
+      endKm = 0 
+    } = req.body;
 
-    // Check if required fields are provided
+    // Validate required fields
     if (!userId || !invoiceNo || !endLocation) {
       return res.status(400).json({ error: "userId, invoiceNo, and endLocation are required." });
     }
+
+    // Calculate totalOtherExpenses, including only expenses with a valid amount > 0
+    const validOtherExpenses = Array.isArray(otherExpenses) 
+      ? otherExpenses.filter(expense => 
+          typeof expense === "object" && 
+          expense !== null && 
+          typeof expense.amount === "number" && 
+          expense.amount > 0
+        )
+      : [];
+
+    const totalOtherExpenses = validOtherExpenses.reduce((sum, expense) => sum + expense.amount, 0);
 
     // Find and update the location with the new end location
     const location = await Location.findOneAndUpdate(
       { userId },
       {
         $set: {
-          endLocation: endLocation,
+          endLocation,
           invoiceNo,
           deliveryStatus,
           paymentStatus
         },
       },
-      { upsert: true, new: true } // Create a new document if it doesn't exist
+      { upsert: true, new: true }
     );
 
     if (!location) {
@@ -412,11 +436,19 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
       return res.status(404).json({ error: "Billing not found" });
     }
 
-    billing.kmTravelled = parseInt(kmTravelled) + parseInt(billing.kmTravelled) || billing.kmTravelled;
-    billing.startingKm = parseFloat(startingKm) + parseFloat(billing.startingKm) || parseFloat(billing.startingKm);
-    billing.endKm = parseFloat(endKm) + parseFloat(billing.endKm) || parseFloat(billing.endKm);
-    billing.fuelCharge = parseFloat(fuelCharge) + parseFloat(billing.fuelCharge) || parseFloat(billing.fuelCharge);
-    billing.otherExpenses = parseFloat(otherExpenses) + parseFloat(billing.otherExpenses) || parseFloat(billing.otherExpenses);
+    // Update numeric fields with parsed values
+    billing.kmTravelled = (parseFloat(billing.kmTravelled)) + parseFloat(kmTravelled || 0);
+    billing.startingKm = parseFloat(startingKm) || parseFloat(billing.startingKm || 0);
+    billing.endKm = parseFloat(endKm) || parseFloat(billing.endKm || 0);
+    billing.fuelCharge = (parseFloat(billing.fuelCharge) || 0) + parseFloat(fuelCharge || 0);
+
+    // Append only valid otherExpenses entries to billing
+    if (validOtherExpenses.length > 0) {
+      billing.otherExpenses.push(...validOtherExpenses.map(expense => ({
+        amount: parseFloat(expense.amount),
+        remark: expense.remark || ""
+      })));
+    }
 
     // Update the delivery status for each product
     billing.products.forEach((product) => {
@@ -437,10 +469,12 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
 
     res.status(200).json({ message: "Delivery completed and statuses updated." });
   } catch (error) {
-    console.error("Error saving end location:", error);
+    console.error("Error processing end-delivery request:", error);
     res.status(500).json({ error: "Failed to complete delivery and update statuses." });
   }
 });
+
+
 
 
 
