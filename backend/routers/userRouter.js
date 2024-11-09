@@ -339,39 +339,46 @@ userRouter.get('/location/users', async (req, res) => {
   }
 });
 
-
+// Update the start location
 // Update the start location
 userRouter.post("/billing/start-delivery", async (req, res) => {
   try {
-    const { userId, driverName, invoiceNo, startLocation } = req.body;
+    const { userId, driverName, invoiceNo, startLocation, deliveryId } = req.body;
 
     // Ensure all required fields are present
-    if (!userId || !driverName || !invoiceNo || !startLocation) {
+    if (!userId || !driverName || !invoiceNo || !startLocation || !deliveryId) {
       return res.status(400).json({ error: "All fields are required." });
     }
 
-
-    // Update or create a location document with userId, driverName, and startLocation
-    const location = await Location.findOneAndUpdate(
-      { userId }, // Match based on userId
-      {
-        $set: {
-          driverName, 
-          startLocation, 
-          invoiceNo, // Optionally update the invoice number
-        }
-      },
-      { upsert: true, new: true } // Create a new document if it doesn't exist
-    );
+    // Find or create a location document for this delivery attempt
+    let location = await Location.findOne({ deliveryId });
 
     if (!location) {
-      return res.status(500).json({ error: "Failed to update or create location." });
+      // Create a new location document
+      location = new Location({
+        userId,
+        driverName,
+        invoiceNo,
+        deliveryId,
+        startLocations: [{ coordinates: startLocation }],
+        endLocations: [],
+      });
+    } else {
+      // Add the new start location to the existing document
+      location.startLocations.push({ coordinates: startLocation });
     }
 
-    // Update the billing delivery status
+    await location.save();
+
+    // Update the billing delivery status and store deliveryId
     const billing = await Billing.findOneAndUpdate(
       { invoiceNo },
-      { $set: { deliveryStatus: "Transit-In" } },
+      {
+        $set: {
+          deliveryStatus: "Transit-In",
+        },
+        $addToSet: { deliveryIds: deliveryId }, // Assuming billing schema has deliveryIds array
+      },
       { new: true } // Return the updated document
     );
 
@@ -387,62 +394,38 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
     console.error("Error saving start location and updating delivery status:", error);
     res.status(500).json({ error: "Failed to save start location and update delivery status." });
   }
-
 });
 
 
 
 
+
+
+// Update the end location and mark as delivered
 // Update the end location and mark as delivered
 userRouter.post("/billing/end-delivery", async (req, res) => {
   try {
-    const { 
-      userId, 
-      invoiceNo, 
-      endLocation, 
-      deliveredProducts = [], 
-      deliveryStatus, 
-      paymentStatus, 
-      kmTravelled = 0, 
-      fuelCharge = 0, 
-      otherExpenses = [], 
-      startingKm = 0, 
-      endKm = 0 
+    const {
+      userId,
+      invoiceNo,
+      endLocation,
+      deliveredProducts = [],
+      kmTravelled = 0,
+      fuelCharge = 0,
+      otherExpenses = [],
+      startingKm = 0,
+      endKm = 0,
+      deliveryId,
     } = req.body;
 
     // Validate required fields
-    if (!userId || !invoiceNo || !endLocation) {
-      return res.status(400).json({ error: "userId, invoiceNo, and endLocation are required." });
+    if (!userId || !invoiceNo || !endLocation || !deliveryId) {
+      return res.status(400).json({ error: "userId, invoiceNo, endLocation, and deliveryId are required." });
     }
 
-    // Calculate totalOtherExpenses, including only expenses with a valid amount > 0
-    const validOtherExpenses = Array.isArray(otherExpenses) 
-      ? otherExpenses.filter(expense => 
-          typeof expense === "object" && 
-          expense !== null && 
-          typeof expense.amount === "number" && 
-          expense.amount > 0
-        )
-      : [];
-
-    const totalOtherExpenses = validOtherExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-
-    // Find and update the location with the new end location
-    const location = await Location.findOneAndUpdate(
-      { userId },
-      {
-        $set: {
-          endLocation,
-          invoiceNo,
-          deliveryStatus,
-          paymentStatus
-        },
-      },
-      { upsert: true, new: true }
-    );
-
-    if (!location) {
-      return res.status(500).json({ error: "Failed to update or create location." });
+    // Validate deliveredProducts format
+    if (!Array.isArray(deliveredProducts) || deliveredProducts.length === 0) {
+      return res.status(400).json({ error: "deliveredProducts must be a non-empty array." });
     }
 
     // Find the billing entry by invoice number
@@ -451,36 +434,74 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
       return res.status(404).json({ error: "Billing not found" });
     }
 
+    // Update deliveredQuantity and deliveryStatus for each product
+    deliveredProducts.forEach((dp) => {
+      const product = billing.products.find((p) => p.item_id === dp.item_id);
+      if (product) {
+        // Calculate the new total delivered quantity
+        const previousDeliveredQuantity = product.deliveredQuantity || 0;
+        const totalDeliveredQuantity = previousDeliveredQuantity + dp.deliveredQuantity;
+
+        // Ensure totalDeliveredQuantity does not exceed the ordered quantity
+        if (totalDeliveredQuantity >= product.quantity) {
+          product.deliveredQuantity = product.quantity;
+          product.deliveryStatus = "Delivered";
+        } else if (totalDeliveredQuantity > 0) {
+          product.deliveredQuantity = totalDeliveredQuantity;
+          product.deliveryStatus = "Partially Delivered";
+        } else {
+          product.deliveredQuantity = previousDeliveredQuantity;
+          product.deliveryStatus = "Pending";
+        }
+      }
+    });
+
+    // Recalculate overall delivery status
+    await billing.updateDeliveryStatus();
+
     // Update numeric fields with parsed values
-    billing.kmTravelled = (parseFloat(billing.kmTravelled)) + parseFloat(kmTravelled || 0);
+    billing.kmTravelled = (parseFloat(billing.kmTravelled) || 0) + parseFloat(kmTravelled || 0);
     billing.startingKm = parseFloat(startingKm) || parseFloat(billing.startingKm || 0);
     billing.endKm = parseFloat(endKm) || parseFloat(billing.endKm || 0);
     billing.fuelCharge = (parseFloat(billing.fuelCharge) || 0) + parseFloat(fuelCharge || 0);
 
-    // Append only valid otherExpenses entries to billing
+    // Process otherExpenses
+    const validOtherExpenses = Array.isArray(otherExpenses)
+      ? otherExpenses.filter(
+          (expense) =>
+            typeof expense === "object" &&
+            expense !== null &&
+            typeof expense.amount === "number" &&
+            expense.amount > 0
+        )
+      : [];
+
     if (validOtherExpenses.length > 0) {
-      billing.otherExpenses.push(...validOtherExpenses.map(expense => ({
-        amount: parseFloat(expense.amount),
-        remark: expense.remark || ""
-      })));
-    }
-
-    // Update the delivery status for each product
-    billing.products.forEach((product) => {
-      product.deliveryStatus = deliveredProducts.includes(product.item_id) ? "Delivered" : "Pending";
-    });
-
-    // Check if all products have been delivered to update overall delivery status
-    const allDelivered = billing.products.every((product) => product.deliveryStatus === "Delivered");
-    billing.deliveryStatus = allDelivered ? "Delivered" : "Pending";
-
-    // Update payment status if provided
-    if (paymentStatus) {
-      billing.paymentStatus = paymentStatus;
+      billing.otherExpenses.push(
+        ...validOtherExpenses.map((expense) => ({
+          amount: parseFloat(expense.amount),
+          remark: expense.remark || "",
+        }))
+      );
     }
 
     // Save the updated billing
     await billing.save();
+
+    // Update the location with the new end location
+    const location = await Location.findOne({ deliveryId });
+
+    if (!location) {
+      return res.status(404).json({ error: "Location not found for this deliveryId." });
+    }
+
+    // Add the end location to the endLocations array
+    location.endLocations.push({
+      coordinates: endLocation,
+      timestamp: new Date(),
+    });
+
+    await location.save();
 
     res.status(200).json({ message: "Delivery completed and statuses updated." });
   } catch (error) {
@@ -493,9 +514,15 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
 
 
 
+
 userRouter.post("/billing/update-payment", async (req, res) => {
   try {
-    const { invoiceNo, paymentAmount, paymentMethod, paymentStatus } = req.body;
+    const { invoiceNo, paymentAmount, paymentMethod } = req.body;
+
+    // Validate required fields
+    if (!invoiceNo || !paymentAmount || !paymentMethod) {
+      return res.status(400).json({ error: "All fields are required." });
+    }
 
     // Find the billing record
     const billing = await Billing.findOne({ invoiceNo });
@@ -503,45 +530,28 @@ userRouter.post("/billing/update-payment", async (req, res) => {
       return res.status(404).json({ error: "Billing not found" });
     }
 
-    // Add the new payment to the payments array
-    billing.payments.push({
-      amount: paymentAmount,
-      method: paymentMethod,
-    });
-
-    // Calculate the total payments received
-    const totalPaymentsReceived = billing.payments.reduce((total, payment) => total + payment.amount, 0);
-
-    // Update payment status based on total payments
-    if (totalPaymentsReceived >= billing.billingAmount) {
-      billing.paymentStatus = "Paid";
-    } else if (totalPaymentsReceived > 0) {
-      billing.paymentStatus = "Partial";
-    } else {
-      billing.paymentStatus = "Pending";
-    }
-
-    await billing.save();
+    // Add the new payment using the model's method
+    await billing.addPayment(paymentAmount, paymentMethod);
 
     res.status(200).json({ message: "Payment updated successfully.", paymentStatus: billing.paymentStatus });
   } catch (error) {
     console.error("Error updating payment:", error);
-    res.status(500).json({ error: "Failed to update payment." });
+    res.status(500).json({ error: error.message || "Failed to update payment." });
   }
 });
 
 
 
-// API endpoint to fetch locations by invoice number
+// Update the route to fetch all locations for a given invoice number
 userRouter.get('/locations/invoice/:invoiceNo', async (req, res) => {
   try {
     const invoiceNo = req.params.invoiceNo;
 
     console.log(invoiceNo);
-    // Fetch all locations related to the invoice number
-    const locations = await Location.findOne({ invoiceNo });
+    // Fetch all location documents related to the invoice number
+    const locations = await Location.find({ invoiceNo });
 
-    if (!locations) {
+    if (!locations || locations.length === 0) {
       return res.status(404).json({ message: 'No locations found for this invoice' });
     }
 
@@ -551,6 +561,7 @@ userRouter.get('/locations/invoice/:invoiceNo', async (req, res) => {
     res.status(500).json({ message: 'Error fetching locations' });
   }
 });
+
 
 
 userRouter.get('/allusers/all', async (req, res) =>{

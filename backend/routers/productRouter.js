@@ -84,35 +84,43 @@ productRouter.get(
 
 
 productRouter.get('/searchform/search', async (req, res) => {
-  let searchQuery = req.query.q || '';
-  searchQuery = (req.query.q || "").replace(/\s+/g, "").toUpperCase();
+  let searchQuery = (req.query.q || '').trim();
+  const limit = parseInt(req.query.limit) || 8;
 
   try {
-    let products;
-    
+    let products = [];
+
     // Check if the search query matches the pattern for an item ID (starts with 'K' followed by numbers)
-    const isItemId = /^K\d+$/.test(searchQuery);
+    const isItemId = /^K\d+$/i.test(searchQuery);
 
     if (isItemId) {
-      // Search for the product by item ID
-      products = await Product.findOne({ item_id: searchQuery });
-      if (products) {
-        return res.status(200).json([products]); // Return the product as an array
+      // Search for the product by item ID (exact match)
+      const product = await Product.findOne({ item_id: searchQuery.toUpperCase() });
+      if (product) {
+        products.push(product);
       } else {
-        return res.status(404).json({ message: 'Item not found' });
+        return res.status(404).json({ message: 'No product found with the specified item ID' });
       }
     } else {
-      // If not an item ID, perform a case-insensitive search by product name
+      // Split the search query into words and create a regex pattern for each
+      const searchTerms = searchQuery.split(/\s+/).map(term => new RegExp(term, 'i'));
+
+      // Find products where all search terms match in the `name` field
       products = await Product.find({
-        name: { $regex: searchQuery, $options: 'i' },
-      }).limit(5); // Limit the number of suggestions
+        $and: searchTerms.map(term => ({ name: { $regex: term } }))
+      }).limit(limit);
+
+      if (products.length === 0) {
+        return res.status(404).json({ message: 'No products match your search query' });
+      }
     }
 
     res.status(200).json(products);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching products' });
+    res.status(500).json({ message: 'Error fetching products', error: error.message });
   }
 });
+
 
 
 // Route to get product by item ID
