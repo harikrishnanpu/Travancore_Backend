@@ -142,7 +142,7 @@ userRouter.put(
   '/profile',
   isAuth,
   expressAsyncHandler(async (req, res) => {
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.body._id);
     if (user) {
       user.name = req.body.name || user.name;
       user.email = req.body.email || user.email;
@@ -339,8 +339,8 @@ userRouter.get('/location/users', async (req, res) => {
   }
 });
 
-// Update the start location
-// Update the start location
+
+// Start Delivery Endpoint
 userRouter.post("/billing/start-delivery", async (req, res) => {
   try {
     const { userId, driverName, invoiceNo, startLocation, deliveryId } = req.body;
@@ -350,59 +350,71 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
       return res.status(400).json({ error: "All fields are required." });
     }
 
-    // Find or create a location document for this delivery attempt
+    // Find the Billing document by invoiceNo
+    const billing = await Billing.findOne({ invoiceNo });
+    if (!billing) {
+      return res.status(404).json({ error: "Billing not found." });
+    }
+
+    // Check if the deliveryId already exists in billing.deliveries
+    let delivery = billing.deliveries.find(d => d.deliveryId === deliveryId);
+
+    if (!delivery) {
+      // Create a new delivery entry
+      delivery = {
+        deliveryId,
+        driverName,
+        startLocations: [{ coordinates: startLocation, timestamp: new Date() }],
+        endLocations: [],
+        productsDelivered: [],
+        deliveryStatus: "Transit-In",
+        kmTravelled: 0,
+        startingKm: 0,
+        endKm: 0,
+        fuelCharge: 0,
+        otherExpenses: [],
+      };
+      billing.deliveries.push(delivery);
+    } else {
+      // Update existing delivery entry with new start location
+      delivery.startLocations.push({ coordinates: startLocation, timestamp: new Date() });
+      delivery.deliveryStatus = "Transit-In";
+    }
+
+    await billing.save();
+
+    // Find or create a Location document for this delivery attempt
     let location = await Location.findOne({ deliveryId });
 
     if (!location) {
-      // Create a new location document
+      // Create a new Location document
       location = new Location({
         userId,
         driverName,
         invoiceNo,
         deliveryId,
-        startLocations: [{ coordinates: startLocation }],
+        startLocations: [{ coordinates: startLocation, timestamp: new Date() }],
         endLocations: [],
       });
     } else {
       // Add the new start location to the existing document
-      location.startLocations.push({ coordinates: startLocation });
+      location.startLocations.push({ coordinates: startLocation, timestamp: new Date() });
     }
 
     await location.save();
 
-    // Update the billing delivery status and store deliveryId
-    const billing = await Billing.findOneAndUpdate(
-      { invoiceNo },
-      {
-        $set: {
-          deliveryStatus: "Transit-In",
-        },
-        $addToSet: { deliveryIds: deliveryId }, // Assuming billing schema has deliveryIds array
-      },
-      { new: true } // Return the updated document
-    );
-
-    if (!billing) {
-      return res.status(404).json({ error: "Billing not found" });
-    }
-
     res.status(200).json({
       message: "Start location and delivery status updated successfully.",
-      location,
+      delivery,
     });
+
   } catch (error) {
     console.error("Error saving start location and updating delivery status:", error);
     res.status(500).json({ error: "Failed to save start location and update delivery status." });
   }
 });
 
-
-
-
-
-
-// Update the end location and mark as delivered
-// Update the end location and mark as delivered
+// End Delivery Endpoint
 userRouter.post("/billing/end-delivery", async (req, res) => {
   try {
     const {
@@ -428,10 +440,16 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
       return res.status(400).json({ error: "deliveredProducts must be a non-empty array." });
     }
 
-    // Find the billing entry by invoice number
+    // Find the Billing document by invoiceNo
     const billing = await Billing.findOne({ invoiceNo });
     if (!billing) {
-      return res.status(404).json({ error: "Billing not found" });
+      return res.status(404).json({ error: "Billing not found." });
+    }
+
+    // Find the corresponding delivery entry
+    const delivery = billing.deliveries.find(d => d.deliveryId === deliveryId);
+    if (!delivery) {
+      return res.status(404).json({ error: "Delivery not found for this deliveryId." });
     }
 
     // Update deliveredQuantity and deliveryStatus for each product
@@ -453,6 +471,17 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
           product.deliveredQuantity = previousDeliveredQuantity;
           product.deliveryStatus = "Pending";
         }
+
+        // Update the delivery's productsDelivered
+        const deliveredProduct = delivery.productsDelivered.find(p => p.item_id === dp.item_id);
+        if (deliveredProduct) {
+          deliveredProduct.deliveredQuantity += dp.deliveredQuantity;
+        } else {
+          delivery.productsDelivered.push({
+            item_id: dp.item_id,
+            deliveredQuantity: dp.deliveredQuantity,
+          });
+        }
       }
     });
 
@@ -460,35 +489,53 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
     await billing.updateDeliveryStatus();
 
     // Update numeric fields with parsed values
-    billing.kmTravelled = (parseFloat(billing.kmTravelled) || 0) + parseFloat(kmTravelled || 0);
-    billing.startingKm = parseFloat(startingKm) || parseFloat(billing.startingKm || 0);
-    billing.endKm = parseFloat(endKm) || parseFloat(billing.endKm || 0);
-    billing.fuelCharge = (parseFloat(billing.fuelCharge) || 0) + parseFloat(fuelCharge || 0);
+    delivery.kmTravelled += parseFloat(kmTravelled) || 0;
+    delivery.startingKm = parseFloat(startingKm) || delivery.startingKm;
+    delivery.endKm = parseFloat(endKm) || delivery.endKm;
+    delivery.fuelCharge += parseFloat(fuelCharge) || 0;
 
     // Process otherExpenses
-    const validOtherExpenses = Array.isArray(otherExpenses)
-      ? otherExpenses.filter(
-          (expense) =>
-            typeof expense === "object" &&
-            expense !== null &&
-            typeof expense.amount === "number" &&
-            expense.amount > 0
-        )
-      : [];
-
-    if (validOtherExpenses.length > 0) {
-      billing.otherExpenses.push(
-        ...validOtherExpenses.map((expense) => ({
-          amount: parseFloat(expense.amount),
-          remark: expense.remark || "",
-        }))
+    if (Array.isArray(otherExpenses) && otherExpenses.length > 0) {
+      const validOtherExpenses = otherExpenses.filter(
+        (expense) =>
+          typeof expense === "object" &&
+          expense !== null &&
+          typeof expense.amount === "number" &&
+          expense.amount > 0
       );
+
+      if (validOtherExpenses.length > 0) {
+        delivery.otherExpenses.push(
+          ...validOtherExpenses.map((expense) => ({
+            amount: parseFloat(expense.amount),
+            remark: expense.remark || "",
+            date: new Date(),
+          }))
+        );
+      }
     }
 
-    // Save the updated billing
+    // Update the delivery status based on products delivered
+    const allDelivered = billing.products.every((product) => product.deliveryStatus === "Delivered");
+    const anyDelivered = billing.products.some(
+      (product) => product.deliveryStatus === "Delivered" || product.deliveryStatus === "Partially Delivered"
+    );
+
+    if (allDelivered) {
+      delivery.deliveryStatus = "Delivered";
+      billing.deliveryStatus = "Delivered";
+    } else if (anyDelivered) {
+      delivery.deliveryStatus = "Partially Delivered";
+      billing.deliveryStatus = "Partially Delivered";
+    } else {
+      delivery.deliveryStatus = "Pending";
+      billing.deliveryStatus = "Pending";
+    }
+
+    // Save the updated Billing document
     await billing.save();
 
-    // Update the location with the new end location
+    // Update the Location document with the new end location
     const location = await Location.findOne({ deliveryId });
 
     if (!location) {
@@ -503,7 +550,8 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
 
     await location.save();
 
-    res.status(200).json({ message: "Delivery completed and statuses updated." });
+    res.status(200).json({ message: "Delivery completed and statuses updated.", delivery });
+
   } catch (error) {
     console.error("Error processing end-delivery request:", error);
     res.status(500).json({ error: "Failed to complete delivery and update statuses." });
@@ -590,7 +638,17 @@ userRouter.post('/alllogs/all', async (req,res)=>{
   }catch (error){
       res.status(500).json({message: "Error Fetching"})
   }
-})
+});
+
+userRouter.get('/all/deliveries', async (req, res) => {
+  try {
+    const deliveries = await Location.find({});
+    res.json(deliveries);
+  } catch (error) {
+    console.error('Error fetching deliveries:', error);
+    res.status(500).json({ message: 'Error fetching deliveries' });
+  }
+});
 
 
 

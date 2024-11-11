@@ -66,13 +66,14 @@ billingRouter.post('/create', async (req, res) => {
       productUpdatePromises.push(product.save({ session }));
     }
 
+
     // Initialize billing data
     const billingData = new Billing({
       invoiceNo,
       invoiceDate,
       salesmanName,
       expectedDeliveryDate,
-      deliveryStatus,
+      deliveryStatus: deliveryStatus || "Pending",
       billingAmount,
       customerName,
       customerAddress,
@@ -264,15 +265,22 @@ billingRouter.get('/driver/', async (req, res) => {
 });
 
 
-billingRouter.get('/product/get-sold-out/:id',async (req,res)=>{
-  const itemId = req.params.id;
-    try {
-      const totalQuantity = await Billing.getTotalQuantitySold(itemId);
-      res.json(totalQuantity)
-    } catch (error) {
-      res.status(500).json({message: "ERROR OCCURED"})
-    }
-})
+billingRouter.get('/product/get-sold-out/:id', async (req, res) => {
+  const itemId = req.params.id.trim();
+
+  try {
+    const totalQuantity = await Billing.getTotalQuantitySold(itemId);
+
+    // Always return a result, even if no sales are found
+    res.status(200).json({ itemId, totalQuantity });
+  } catch (error) {
+    console.error("Error occurred while fetching total quantity sold:", error);
+    res.status(500).json({ message: "An error occurred while fetching the data.", error: error.message });
+  }
+});
+
+
+
 
 // Get a billing by ID
 billingRouter.get('/:id', async (req, res) => {
@@ -413,12 +421,23 @@ billingRouter.delete('/billings/delete/:id',async(req,res)=>{
 
 billingRouter.get('/lastOrder/id', async (req, res) => {
   try {
-    const billing = await Billing.findOne().sort({ createdAt: -1 });
-    res.json(billing.invoiceNo);
+    // Fetch the invoice with the highest sequence number starting with 'K'
+    const billing = await Billing.findOne({ invoiceNo: /^K\d+$/ })
+      .sort({ invoiceNo: -1 })
+      .collation({ locale: "en", numericOrdering: true });
+
+    // Check if an invoice was found
+    if (billing) {
+      res.json(billing.invoiceNo);
+    } else {
+      res.status(404).json({ message: 'No invoice found' });
+    }
   } catch (error) {
     res.status(500).json({ message: 'Error fetching last order' });
   }
 });
+
+
 
 
 billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
@@ -463,6 +482,46 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
   }
 });
 
+
+billingRouter.get('/summary/monthly-sales', async (req, res) => {
+  try {
+    const sales = await Billing.aggregate([
+      {
+        $group: {
+          _id: { $month: '$invoiceDate' },
+          totalSales: { $sum: '$billingAmount' },
+        },
+      },
+      { $sort: { '_id': 1 } },
+    ]);
+
+    res.json(sales);
+  } catch (error) {
+    console.error('Error fetching monthly sales data:', error);
+    res.status(500).json({ message: 'Error fetching monthly sales data' });
+  }
+});
+
+// GET Total Billing Sum
+billingRouter.get('/summary/total-sales', async (req, res) => {
+  try {
+    const totalSales = await Billing.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: '$billingAmount' },
+        },
+      },
+    ]);
+
+    res.json({
+      totalSales: totalSales.length > 0 ? totalSales[0].totalAmount : 0,
+    });
+  } catch (error) {
+    console.error('Error fetching total sales:', error);
+    res.status(500).json({ message: 'Error fetching total sales' });
+  }
+});
 
 
 export default billingRouter;

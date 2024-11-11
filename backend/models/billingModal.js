@@ -112,6 +112,33 @@ BillingSchema.methods.addPayment = async function (amount, method) {
   await this.save();
 };
 
+
+
+// Static method to calculate total quantity sold for a given item
+// Static method to calculate total quantity sold for a given item
+BillingSchema.statics.getTotalQuantitySold = async function (itemId) {
+  try {
+    const result = await this.aggregate([
+      { $unwind: "$products" }, // Unwind the products array to access each product individually
+      { $match: { "products.item_id": itemId.trim() } }, // Match the specific item by item_id
+      {
+        $group: {
+          _id: "$products.item_id",
+          totalQuantity: { $sum: "$products.quantity" }, // Sum the quantity of the product sold
+        },
+      },
+    ]);
+
+    // If no results found, return 0
+    return result.length > 0 ? result[0].totalQuantity : 0;
+  } catch (error) {
+    console.error("Error in getTotalQuantitySold:", error);
+    return 0; // Return 0 in case of any error
+  }
+};
+
+
+
 // Pre-save hook to update billingAmountReceived and payment status
 BillingSchema.pre("save", function (next) {
   // Calculate total received from payments
@@ -140,13 +167,13 @@ BillingSchema.methods.updateDeliveryStatus = function () {
     (product) => product.deliveryStatus === "Delivered" || product.deliveryStatus === "Partially Delivered"
   );
 
-  if (allDelivered) {
-    this.deliveryStatus = "Delivered";
-  } else if (anyDelivered) {
-    this.deliveryStatus = "Partially Delivered";
-  } else {
-    this.deliveryStatus = "Pending";
-  }
+  // if (allDelivered) {
+  //   this.deliveryStatus = "Delivered";
+  // } else if (anyDelivered) {
+  //   this.deliveryStatus = "Partially Delivered";
+  // } else {
+  //   this.deliveryStatus = "Pending";
+  // }
 
   return this.save();
 };

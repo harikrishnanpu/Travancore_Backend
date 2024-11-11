@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true },
     isAdmin: { type: Boolean, default: false, required: true },
     isSeller: { type: Boolean, default: false, required: true },
+    isSuper: { type: Boolean, default: false},
     seller: {
       name: String,
       logo: String,

@@ -177,13 +177,28 @@ productRouter.get('/search/itemId', async (req, res) => {
 });
 
 
-productRouter.get(
-  '/categories',
-  expressAsyncHandler(async (req, res) => {
-    const categories = await Product.find().distinct('category');
-    res.send(categories);
-  })
-);
+productRouter.get('/categories', async (req, res) => {
+  try {
+    const categories = await Product.aggregate([
+      {
+        $group: {
+          _id: '$category',
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    res.json(
+      categories.map((category) => ({
+        name: category._id,
+        count: category.count,
+      }))
+    );
+  } catch (error) {
+    console.error('Error fetching product categories:', error);
+    res.status(500).json({ message: 'Error fetching product categories' });
+  }
+});
 
 productRouter.get(
   '/seed',
@@ -225,14 +240,21 @@ productRouter.post(
   isAuth,
   expressAsyncHandler(async (req, res) => {
     const product = new Product({
-      name: 'Sample name ' + Date.now(),
+      name: 'Product Name',
       item_id: Date.now(),
       seller: req.user._id,
       image: '/images/',
       price: 0,
-      category: 'Sample category',
-      brand: 'Sample brand',
+      category: 'Category',
+      brand: 'Brand',
       countInStock: 0,
+      psRatio: 0,
+      pUnit: 'BOX',
+      sUnit: 'NOS',
+      length: 0,
+      breadth: 0,
+      size: 'size',
+      unit: 'unit',
       rating: 0,
       numReviews: 0,
       description: 'Sample description',
@@ -268,6 +290,13 @@ productRouter.put(
       product.countInStock = req.body.countInStock;
       product.description = req.body.description;
       product.item_id = req.body.itemId;
+      product.psRatio = req.body.psRatio;
+      product.pUnit = req.body.pUnit;
+      product.sUnit = req.body.sUnit;
+      product.length = req.body.length;
+      product.breadth = req.body.breadth;
+      product.size = req.body.size;
+      product.unit = req.body.unit;
       const updatedProduct = await product.save();
       res.send({ message: 'Product Updated', product: updatedProduct });
     } else {
@@ -457,6 +486,8 @@ productRouter.get('/low-stock/all', async (req, res) => {
     res.status(500).json({ message: 'Error fetching low-stock products', error });
   }
 });
+
+
 
 
 export default productRouter;
