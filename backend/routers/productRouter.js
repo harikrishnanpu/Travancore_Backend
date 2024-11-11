@@ -177,7 +177,7 @@ productRouter.get('/search/itemId', async (req, res) => {
 });
 
 
-productRouter.get('/categories', async (req, res) => {
+productRouter.get('/admin/categories', async (req, res) => {
   try {
     const categories = await Product.aggregate([
       {
@@ -199,6 +199,19 @@ productRouter.get('/categories', async (req, res) => {
     res.status(500).json({ message: 'Error fetching product categories' });
   }
 });
+
+
+productRouter.get(
+  '/categories',
+  expressAsyncHandler(async (req, res) => {
+    const categories = await Product.find().distinct('category');
+    res.send(categories);
+  })
+);
+
+
+
+
 
 productRouter.get(
   '/seed',
