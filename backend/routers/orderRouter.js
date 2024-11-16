@@ -73,7 +73,7 @@ orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) =>
 
       if (product) {
         const oldQuantity = oldItemMap.get(item.itemId) || 0; // Default to 0 if item wasn't in the old purchase
-        const newQuantity = parseInt(item.quantity);
+        const newQuantity = parseFloat(item.quantity);
 
         if (newQuantity === 0) {
           // If the new quantity is 0, restore the stock by the old quantity
@@ -101,7 +101,7 @@ orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) =>
           }
 
           // Update product price
-          product.price = parseInt(item.price);
+          product.price = parseFloat(item.price);
         }
 
         // Save the updated product stock
@@ -350,7 +350,7 @@ orderRouter.get('/summary/all', async (req,res)=>{
   const AllPurchases = await Purchase.count()
   const AllDamages = await Damage.count()
   const bills = await Billing.find(); // Get all bills
-  const Billingsum = bills.reduce((sum, bill) => sum + parseInt(bill.billingAmount), 0); // Calculate the sum
+  const Billingsum = bills.reduce((sum, bill) => sum + parseFloat(bill.billingAmount), 0); // Calculate the sum
 
   const outOfStock = await Product.countDocuments({ countInStock: 0 });
   const summary = {users : Allusers ,bills : AllBills,returns: AllReturns,products: AllProducts,purchases: AllPurchases,damages: AllDamages,Billingsum: Billingsum, Allbills: bills,outOfStockProducts: outOfStock}

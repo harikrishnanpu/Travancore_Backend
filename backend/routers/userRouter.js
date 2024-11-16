@@ -621,6 +621,15 @@ userRouter.get('/allusers/all', async (req, res) =>{
   }
 });
 
+userRouter.get('/salesmen/all', async (req, res) => {
+  try{
+      const allUsers = await User.find()
+      res.status(200).json(allUsers)
+  }catch (error){
+      res.status(500).json({message: "Error Fetching"})
+  }
+});
+
 
 userRouter.get('/alllogs/all', async (req,res)=>{
   try{

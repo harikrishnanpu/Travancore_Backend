@@ -1,13 +1,16 @@
+// models/Billing.js
 import mongoose from "mongoose";
 
 const BillingSchema = new mongoose.Schema(
   {
     invoiceNo: { type: String, required: true, unique: true },
+    isApproved: { type: Boolean, default: false},
     invoiceDate: { type: Date, required: true },
     salesmanName: { type: String, required: true },
     expectedDeliveryDate: { type: Date, required: true },
     deliveryStatus: { type: String, default: "Pending" },
-    billingAmount: { type: Number, required: true },
+    billingAmount: { type: Number, required: true }, // Total before discount
+    discount: { type: Number, default: 0 },
     billingAmountReceived: { type: Number, default: 0 },
     paymentStatus: { type: String, required: true, default: "Unpaid" },
     customerName: { type: String, required: true },
@@ -17,7 +20,7 @@ const BillingSchema = new mongoose.Schema(
     startingKm: { type: Number, default: 0 },
     endKm: { type: Number, default: 0 },
     fuelCharge: { type: Number, default: 0 },
-    marketedBy: { type: String},
+    marketedBy: { type: String },
     otherExpenses: [
       {
         amount: { type: Number },
@@ -29,10 +32,17 @@ const BillingSchema = new mongoose.Schema(
       {
         item_id: { type: String, required: true },
         name: { type: String, required: true },
-        price: { type: Number },
+        sellingPrice: { type: Number, required: true },
         category: { type: String, required: true },
+        unit: { type: String, required: true },
         brand: { type: String, required: true },
         quantity: { type: Number, required: true },
+        enteredQty: { type: Number, required: true },
+        length: { type: String, required: true },
+        breadth: { type: String, required: true },
+        size: { type: String, required: true },
+        psRatio: { type: String, required: true },
+        sellingPriceinQty: { type: Number, required: true },
         deliveredQuantity: { type: Number, default: 0 }, // New field
         deliveryStatus: { type: String, default: "Pending" },
       },
@@ -100,8 +110,11 @@ BillingSchema.methods.addPayment = async function (amount, method) {
     0
   );
 
-  // Update the payment status based on the total amount received
-  if (this.billingAmountReceived >= this.billingAmount) {
+  // Calculate net amount after discount
+  const netAmount = this.billingAmount - (this.discount || 0);
+
+  // Update the payment status based on the total amount received vs net amount
+  if (this.billingAmountReceived >= netAmount) {
     this.paymentStatus = "Paid";
   } else if (this.billingAmountReceived > 0) {
     this.paymentStatus = "Partial";
@@ -112,9 +125,6 @@ BillingSchema.methods.addPayment = async function (amount, method) {
   await this.save();
 };
 
-
-
-// Static method to calculate total quantity sold for a given item
 // Static method to calculate total quantity sold for a given item
 BillingSchema.statics.getTotalQuantitySold = async function (itemId) {
   try {
@@ -137,8 +147,6 @@ BillingSchema.statics.getTotalQuantitySold = async function (itemId) {
   }
 };
 
-
-
 // Pre-save hook to update billingAmountReceived and payment status
 BillingSchema.pre("save", function (next) {
   // Calculate total received from payments
@@ -147,8 +155,11 @@ BillingSchema.pre("save", function (next) {
     0
   );
 
+  // Calculate net amount after discount
+  const netAmount = this.billingAmount - (this.discount || 0);
+
   // Update the payment status
-  if (this.billingAmountReceived >= this.billingAmount) {
+  if (this.billingAmountReceived >= netAmount) {
     this.paymentStatus = "Paid";
   } else if (this.billingAmountReceived > 0) {
     this.paymentStatus = "Partial";
@@ -167,17 +178,16 @@ BillingSchema.methods.updateDeliveryStatus = function () {
     (product) => product.deliveryStatus === "Delivered" || product.deliveryStatus === "Partially Delivered"
   );
 
-  // if (allDelivered) {
-  //   this.deliveryStatus = "Delivered";
-  // } else if (anyDelivered) {
-  //   this.deliveryStatus = "Partially Delivered";
-  // } else {
-  //   this.deliveryStatus = "Pending";
-  // }
+  if (allDelivered) {
+    this.deliveryStatus = "Delivered";
+  } else if (anyDelivered) {
+    this.deliveryStatus = "Partially Delivered";
+  } else {
+    this.deliveryStatus = "Pending";
+  }
 
   return this.save();
 };
-
 
 const Billing = mongoose.model("Billing", BillingSchema);
 

@@ -48,7 +48,7 @@ returnRouter.post('/create', async (req, res) => {
       }
 
       // Adjust countInStock (increase if product is returned)
-      updatedProduct.countInStock += parseInt(product.quantity);
+      updatedProduct.countInStock += parseFloat(product.quantity);
 
       await updatedProduct.save({ session });
     }
@@ -91,7 +91,7 @@ returnRouter.post('/damage/create', async (req, res) => {
       for (const damagedItem of damagedItems) {
         await Product.findOneAndUpdate(
           { item_id: damagedItem.item_id },
-          { $inc: { countInStock: -parseInt(damagedItem.quantity) } },
+          { $inc: { countInStock: -parseFloat(damagedItem.quantity) } },
           { new: true }
         );
       }
@@ -139,7 +139,7 @@ returnRouter.get('/damage/getDamagedData', async (req, res) => {
       const product = await Product.findOne({ item_id: item.item_id });
   
       if (product) {
-        product.countInStock += parseInt(item.quantity);
+        product.countInStock += parseFloat(item.quantity);
         await product.save();
       }
   
@@ -177,7 +177,7 @@ returnRouter.get('/damage/getDamagedData', async (req, res) => {
   
         if (product) {
           // Reduce the countInStock by the quantity in the purchase
-          product.countInStock -= parseInt(item.quantity)
+          product.countInStock -= parseFloat(item.quantity)
   
           if (product.countInStock < 0) {
             product.countInStock = 0; // Ensure stock doesn't go below zero
@@ -265,7 +265,7 @@ returnRouter.get('/damage/getDamagedData', async (req, res) => {
         }
   
         // Adjust countInStock (increase if product is returned)
-        updatedProduct.countInStock += parseInt(product.quantity);
+        updatedProduct.countInStock += parseFloat(product.quantity);
   
         await updatedProduct.save({ session });
       }

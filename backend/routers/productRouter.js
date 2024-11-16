@@ -85,7 +85,7 @@ productRouter.get(
 
 productRouter.get('/searchform/search', async (req, res) => {
   let searchQuery = (req.query.q || '').trim();
-  const limit = parseInt(req.query.limit) || 8;
+  const limit = parseFloat(req.query.limit) || 8;
 
   try {
     let products = [];
@@ -288,6 +288,34 @@ productRouter.put('/get-item/:id', async (req, res) => {
   }
 });
 
+productRouter.put('/update-stock/:id', async (req, res) => {
+  const { countInStock } = req.body; // Extract countInStock from the request body
+
+  try {
+    // Check if countInStock is a valid number (float or integer)
+    if (typeof countInStock !== 'number' || isNaN(countInStock)) {
+      return res.status(400).json({ message: 'Invalid countInStock value' });
+    }
+
+    // Use $inc to add the countInStock value (can be a float)
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { countInStock } },
+      { new: true }
+    );
+
+    // Check if the product was found
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating product stock' });
+  }
+});
+
+
 productRouter.put(
   '/:id',
   isAuth,
@@ -368,48 +396,75 @@ productRouter.post(
 
 
 productRouter.post('/purchase', asyncHandler(async (req, res) => {
-
-
-  const { sellerName, sellerId, invoiceNo, items } = req.body;
-
-  try{
-
-  for (const item of items) {
-    const existingProduct = await Product.findOne({ item_id: item.itemId });
-
-    if (existingProduct) {
-      existingProduct.price = parseInt(item.price)
-      existingProduct.countInStock += parseInt(item.quantity);
-      await existingProduct.save();
-    } else {
-      const newProduct = new Product({
-        name: item.name,
-        item_id: item.itemId,
-        brand: item.brand,
-        category: item.category,
-        countInStock: item.quantity,
-        // Add other necessary fields here (e.g., description, price, etc.)
-      });
-      await newProduct.save();
-      console.log("product saved")
-    }
-  }
-
-  const purchase = new Purchase({
+  const {
     sellerName,
-    sellerId,
     invoiceNo,
     items,
-  });
+    purchaseId,
+    sellerAddress,
+    sellerGst,
+    billingDate,
+    invoiceDate,
+  } = req.body;
 
-  const createdPurchase = await purchase.save();
-  res.status(201).json(createdPurchase);
-  }catch (error){
-    console.log(error)
-    res.status(500).json({message: "error occureed"})
+  try {
+    for (const item of items) {
+      const existingProduct = await Product.findOne({ item_id: item.itemId });
+
+      if (existingProduct) {
+        existingProduct.price = parseFloat(item.price);
+        existingProduct.countInStock += parseFloat(item.quantity);
+        existingProduct.sUnit = item.sUnit;
+        existingProduct.psRatio = item.psRatio;
+        existingProduct.length = item.length;
+        existingProduct.breadth = item.breadth;
+        existingProduct.size = item.size;
+        existingProduct.pUnit = item.pUnit;
+        existingProduct.brand = item.brand;
+        existingProduct.category = item.category;
+        existingProduct.name = item.name;
+        await existingProduct.save();
+        console.log(`Updated existing product: ${existingProduct.item_id}`);
+      } else {
+        const newProduct = new Product({
+          name: item.name,
+          item_id: item.itemId,
+          brand: item.brand,
+          category: item.category,
+          price: parseFloat(item.price),
+          countInStock: parseFloat(item.quantity),
+          sUnit: item.sUnit,
+          psRatio: item.psRatio,
+          length: item.length,
+          breadth: item.breadth,
+          size: item.size,
+          pUnit: item.pUnit,
+        });
+        await newProduct.save();
+        console.log(`Product saved: ${newProduct.item_id}`);
+      }
+    }
+
+    const purchase = new Purchase({
+      sellerName,
+      invoiceNo,
+      items,
+      purchaseId,
+      sellerAddress,
+      sellerGst,
+      billingDate,
+      invoiceDate,
+    });
+
+    const createdPurchase = await purchase.save();
+    res.status(201).json(createdPurchase);
+  } catch (error) {
+    console.error('Error in /purchase route:', error);
+    res.status(500).json({ message: "An error occurred" });
   }
-
 }));
+
+
 
 productRouter.delete('/purchases/delete/:id',async(req,res)=>{
   try{
@@ -425,7 +480,7 @@ productRouter.delete('/purchases/delete/:id',async(req,res)=>{
 
       if (product) {
         // Reduce the countInStock by the quantity in the purchase
-        product.countInStock -= parseInt(item.quantity)
+        product.countInStock -= parseFloat(item.quantity)
 
         if (product.countInStock < 0) {
           product.countInStock = 0; // Ensure stock doesn't go below zero

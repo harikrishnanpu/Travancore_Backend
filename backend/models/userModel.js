@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema(
     isAdmin: { type: Boolean, default: false, required: true },
     isSeller: { type: Boolean, default: false, required: true },
     isSuper: { type: Boolean, default: false},
+    contactNumber: { type: String, required: true},
     seller: {
       name: String,
       logo: String,
