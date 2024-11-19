@@ -29,9 +29,9 @@ billingRouter.post('/create', async (req, res) => {
       marketedBy,
       paymentAmount,
       paymentMethod,
+      paymentReceivedDate,
       salesmanPhoneNumber,
       userId,
-      paymentReceivedDate,
       products // Expected to be an array of objects with item_id and quantity
     } = req.body;
 
@@ -146,6 +146,8 @@ billingRouter.post('/create', async (req, res) => {
       productUpdatePromises.push(product.save({ session }));
     }
 
+
+
     // -----------------------
     // 5. Initialize Billing Data
     // -----------------------
@@ -161,6 +163,7 @@ billingRouter.post('/create', async (req, res) => {
       customerAddress,
       customerContactNumber,
       marketedBy,
+      submittedBy: userId,
       products,
       payments: [] // Initialize payments as an empty array
     });
@@ -205,6 +208,17 @@ billingRouter.post('/create', async (req, res) => {
       session.endSession();
       return res.status(404).json({ message: 'User not found' });
     }
+
+
+    const AdminUser = await User.findById(userId)
+
+    if(AdminUser){
+
+    if(AdminUser.isAdmin){
+      billingData.isApproved = true;
+    }
+
+  }
 
     // -----------------------
     // 7. Save Billing Data and Update Products
@@ -260,8 +274,10 @@ billingRouter.post('/edit/:id', async (req, res) => {
       discount,
       paymentStatus,
       deliveryStatus,
-      payments,
       customerContactNumber,
+      paymentAmount,
+      paymentMethod,
+      paymentReceivedDate,
       marketedBy,
     } = req.body;
 
@@ -438,27 +454,52 @@ billingRouter.post('/edit/:id', async (req, res) => {
 
     // === 4. Handle Payments ===
 
-    if (payments && Array.isArray(payments) && payments.length > 0) {
-      payments.forEach((payment) => {
-        const { amount, method, receivedDate } = payment;
-
-        // Basic validation for payment fields
-        if (
-          amount === undefined ||
-          method === undefined ||
-          receivedDate === undefined
-        ) {
-          // Skip invalid payment entries
-          return;
-        }
-
-        existingBilling.payments.push({
-          amount: parseFloat(amount) || 0,
-          method: method || 'Unknown',
-          receivedDate: new Date(receivedDate),
+    if (paymentAmount !== undefined || paymentMethod) {
+      // Ensure both paymentAmount and paymentMethod are provided
+      if (!paymentAmount || !paymentMethod) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          message:
+            'Both paymentAmount and paymentMethod are required to process a payment.',
         });
-      });
+      }
+
+      const parsedPaymentAmount = parseFloat(paymentAmount);
+
+      // Validate payment amount
+      if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: 'Invalid payment amount.' });
+      }
+
+      // Calculate total paid so far
+      const totalPaid = existingBilling.payments.reduce(
+        (acc, payment) => acc + parseFloat(payment.amount),
+        0
+      );
+
+      // Ensure paymentAmount does not exceed totalAmount
+      if (totalPaid + parsedPaymentAmount > billingAmount) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          message:
+            'Payment amount exceeds the total amount after discount.',
+        });
+      }
+
+      const paymentEntry = {
+        amount: parsedPaymentAmount,
+        method: paymentMethod,
+        date: paymentReceivedDate ? new Date(paymentReceivedDate) : new Date(),
+      };
+
+      // Add the payment to the payments array
+      existingBilling.payments.push(paymentEntry);
     }
+
 
     // === 5. Update Billing Details ===
 
@@ -835,6 +876,168 @@ billingRouter.get('/purchases/categories', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+billingRouter.put('/bill/approve/:billId', async (req, res) => {
+  try {
+    const { billId } = req.params;
+
+    // Find the existing bill
+    const existingBill = await Billing.findById(billId);
+    if (!existingBill) {
+      return res.status(404).json({ error: 'Bill not found' });
+    }
+
+    // Update bill status to 'approved'
+    existingBill.isApproved = true;
+    existingBill.approvedBy = req.body.userId;
+
+    // Save the updated document
+    await existingBill.save();
+
+    res.json({ message: 'Bill approved successfully', bill: existingBill });
+  } catch (error) {
+    console.error('Error approving bill:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+billingRouter.get('/deliveries/all', async (req, res) => {
+  try {
+    const { userId, invoiceNo, driverName } = req.query;
+
+    let query = {};
+    if (invoiceNo) {
+      query.invoiceNo = { $regex: invoiceNo, $options: 'i' };
+    }
+
+    if (driverName) {
+      query['deliveries.driverName'] = { $regex: driverName, $options: 'i' };
+    }
+
+    if (userId) {
+      query['deliveries.userId'] = { $in: Array.isArray(userId) ? userId : [userId] };
+    }
+
+    const billings = await Billing.find(query).lean();
+
+    const deliveries = billings.flatMap(billing =>
+      billing.deliveries
+        .filter(delivery => !driverName || delivery.driverName === driverName)
+        .map(delivery => ({
+          invoiceNo: billing.invoiceNo,
+          customerName: billing.customerName,
+          customerAddress: billing.customerAddress,
+          billingAmount: billing.billingAmount,
+          paymentStatus: billing.paymentStatus,
+          deliveryStatus: delivery.deliveryStatus,
+          deliveryId: delivery.deliveryId,
+          driverName: delivery.driverName,
+          kmTravelled: delivery.kmTravelled,
+          startingKm: delivery.startingKm,
+          endKm: delivery.endKm,
+          fuelCharge: delivery.fuelCharge,
+          otherExpenses: delivery.otherExpenses,
+          productsDelivered: delivery.productsDelivered,
+        }))
+    );
+
+    res.json(deliveries);
+  } catch (error) {
+    console.error('Error fetching deliveries:', error);
+    res.status(500).json({ message: 'Error fetching deliveries.' });
+  }
+});
+
+
+// PUT /api/users/billing/update-delivery
+billingRouter.put('/update-delivery/update', async (req, res) => {
+  try {
+    console.log('Received update request:', req.body); // Debugging log
+
+    const {
+      deliveryId,
+      startingKm,
+      endKm,
+      kmTravelled = 0,
+      fuelCharge = 0,
+      newOtherExpense, // { amount, remark } for the new other expense
+    } = req.body;
+
+    // Validate required fields
+    if (!deliveryId) {
+      return res.status(400).json({ message: 'Delivery ID is required.' });
+    }
+
+    if (newOtherExpense && newOtherExpense.amount <= 0) {
+      return res.status(400).json({ message: 'Invalid other expense amount.' });
+    }
+
+    // Find the Billing document containing the delivery
+    const billing = await Billing.findOne({ 'deliveries.deliveryId': deliveryId });
+    if (!billing) {
+      return res.status(404).json({ message: 'Billing document not found.' });
+    }
+
+    // Find the specific delivery entry
+    const delivery = billing.deliveries.find((d) => d.deliveryId === deliveryId);
+    if (!delivery) {
+      return res.status(404).json({ message: 'Delivery not found.' });
+    }
+
+    // Update the delivery fields
+    if (startingKm !== undefined) {
+      const parsedStartingKm = parseFloat(startingKm);
+      if (!isNaN(parsedStartingKm)) {
+        delivery.startingKm = parsedStartingKm;
+      }
+    }
+
+    if (endKm !== undefined) {
+      const parsedEndKm = parseFloat(endKm);
+      if (!isNaN(parsedEndKm)) {
+        delivery.endKm = parsedEndKm;
+      }
+    }
+
+    if (kmTravelled !== undefined && !isNaN(parseFloat(kmTravelled))) {
+      delivery.kmTravelled += parseFloat(kmTravelled);
+    }
+
+    if (fuelCharge !== undefined && !isNaN(parseFloat(fuelCharge))) {
+      delivery.fuelCharge += parseFloat(fuelCharge);
+      billing.fuelCharge += parseFloat(fuelCharge);
+    }
+
+    if (newOtherExpense && newOtherExpense.amount > 0) {
+      const parsedAmount = parseFloat(newOtherExpense.amount);
+      if (!isNaN(parsedAmount)) {
+        const expenseEntry = {
+          amount: parsedAmount,
+          remark: newOtherExpense.remark || 'No remark provided',
+          date: new Date(),
+        };
+
+        // Add the new other expense to the delivery's otherExpenses
+        delivery.otherExpenses.push(expenseEntry);
+
+        // Add to the top-level billing otherExpenses
+        billing.otherExpenses.push(expenseEntry);
+      }
+    }
+
+    // Save the updated Billing document
+    await billing.save();
+
+    res.status(200).json({ message: 'Delivery and billing updated successfully.', data: billing });
+  } catch (error) {
+    console.error('Error updating delivery and billing:', error);
+    res.status(500).json({ message: 'Error updating delivery and billing.' });
+  }
+});
+
+
+
 
 
 export default billingRouter;

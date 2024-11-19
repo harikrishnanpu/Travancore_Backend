@@ -5,6 +5,8 @@ const BillingSchema = new mongoose.Schema(
   {
     invoiceNo: { type: String, required: true, unique: true },
     isApproved: { type: Boolean, default: false},
+    approvedBy: { type: String},
+    submittedBy: { type: String },
     invoiceDate: { type: Date, required: true },
     salesmanName: { type: String, required: true },
     expectedDeliveryDate: { type: Date, required: true },
@@ -58,6 +60,7 @@ const BillingSchema = new mongoose.Schema(
     deliveries: [
       {
         deliveryId: { type: String, required: true },
+        userId: String,
         driverName: String,
         startLocations: [
           {
@@ -86,6 +89,7 @@ const BillingSchema = new mongoose.Schema(
           {
             amount: Number,
             remark: String,
+            date: { type: Date, default: Date.now }, // Added date field
           },
         ],
       },

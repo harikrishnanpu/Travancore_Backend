@@ -16,6 +16,7 @@ import xlsx from 'xlsx'; // Use 'xlsx' import for ES modules
 import logMiddleware from './middleware.js';
 import bodyParser from 'body-parser';
 import puppeteer from 'puppeteer';
+import transactionRouter from './routers/dailyRouter.js';
 
 dotenv.config();
 
@@ -34,7 +35,9 @@ app.use('/api/users', userRouter);
 app.use('/api/products', productRouter);
 app.use('/api/orders', orderRouter);
 app.use('/api/billing', billingRouter); // Use the billing routes under the /api/billing path
-app.use('/api/returns',returnRouter)
+app.use('/api/returns',returnRouter);
+app.use('/api/daily',transactionRouter);
+
 app.get('/api/config/paypal', (req, res) => {
   res.send(process.env.PAYPAL_CLIENT_ID || 'sb');
 });

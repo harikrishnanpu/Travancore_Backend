@@ -363,6 +363,7 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
       // Create a new delivery entry
       delivery = {
         deliveryId,
+        userId,
         driverName,
         startLocations: [{ coordinates: startLocation, timestamp: new Date() }],
         endLocations: [],
@@ -506,6 +507,14 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
 
       if (validOtherExpenses.length > 0) {
         delivery.otherExpenses.push(
+          ...validOtherExpenses.map((expense) => ({
+            amount: parseFloat(expense.amount),
+            remark: expense.remark || "",
+            date: new Date(),
+          }))
+        );
+
+        billing.otherExpenses.push(
           ...validOtherExpenses.map((expense) => ({
             amount: parseFloat(expense.amount),
             remark: expense.remark || "",
