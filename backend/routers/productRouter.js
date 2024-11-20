@@ -404,6 +404,7 @@ productRouter.post('/purchase', asyncHandler(async (req, res) => {
     sellerAddress,
     sellerGst,
     billingDate,
+    totalAmount,
     invoiceDate,
   } = req.body;
 
@@ -413,7 +414,6 @@ productRouter.post('/purchase', asyncHandler(async (req, res) => {
 
       if (existingProduct) {
         existingProduct.price = parseFloat(item.price);
-        existingProduct.countInStock += parseFloat(item.quantity);
         existingProduct.sUnit = item.sUnit;
         existingProduct.psRatio = item.psRatio;
         existingProduct.length = item.length;
@@ -423,6 +423,13 @@ productRouter.post('/purchase', asyncHandler(async (req, res) => {
         existingProduct.brand = item.brand;
         existingProduct.category = item.category;
         existingProduct.name = item.name;
+        if(item.pUnit == "BOX"){
+          existingProduct.countInStock += parseFloat((parseFloat(item.quantity) * parseFloat(item.psRatio)).toFixed(2));
+        }else if(item.pUnit == "SQFT"){
+          existingProduct.countInStock += parseFloat((parseFloat(item.quantity) / parseFloat(parseFloat(item.length) * parseFloat(item.breadth))).toFixed(2));
+        }else {
+          existingProduct.countInStock += parseFloat(item.quantity);
+        }
         await existingProduct.save();
         console.log(`Updated existing product: ${existingProduct.item_id}`);
       } else {
@@ -454,6 +461,7 @@ productRouter.post('/purchase', asyncHandler(async (req, res) => {
       sellerGst,
       billingDate,
       invoiceDate,
+      totalAmount
     });
 
     const createdPurchase = await purchase.save();

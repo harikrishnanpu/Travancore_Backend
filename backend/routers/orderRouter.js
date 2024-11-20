@@ -76,8 +76,14 @@ orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) =>
         const newQuantity = parseFloat(item.quantity);
 
         if (newQuantity === 0) {
-          // If the new quantity is 0, restore the stock by the old quantity
-          product.countInStock -= oldQuantity;
+
+          if(item.pUnit == "BOX"){
+            product.countInStock -= parseFloat((parseFloat(oldQuantity) * parseFloat(item.psRatio)).toFixed(2));
+          }else if(item.pUnit == "SQFT"){
+            product.countInStock -= parseFloat((parseFloat(oldQuantity) / parseFloat(parseFloat(item.length) * parseFloat(item.breadth))).toFixed(2));
+          }else {
+            product.countInStock -= parseFloat(oldQuantity);
+          }
 
           // Remove the item from the purchase
           await Purchase.updateOne(
@@ -88,11 +94,24 @@ orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) =>
           // If the new quantity is greater than the old, increase stock
           if (newQuantity > oldQuantity) {
             const quantityDifference = newQuantity - oldQuantity;
-            product.countInStock += quantityDifference; 
+            if(item.pUnit == "BOX"){
+              product.countInStock += parseFloat((parseFloat(quantityDifference) * parseFloat(item.psRatio)).toFixed(2));
+            }else if(item.pUnit == "SQFT"){
+              product.countInStock += parseFloat((parseFloat(quantityDifference) / parseFloat(parseFloat(item.length) * parseFloat(item.breadth))).toFixed(2));
+            }else {
+              product.countInStock += parseFloat(quantityDifference);
+            }
           } else if (newQuantity < oldQuantity) {
             // If the new quantity is less, increase stock
             const quantityDifference = oldQuantity - newQuantity;
-            product.countInStock -= quantityDifference; 
+
+            if(item.pUnit == "BOX"){
+              product.countInStock -= parseFloat((parseFloat(quantityDifference) * parseFloat(item.psRatio)).toFixed(2));
+            }else if(item.pUnit == "SQFT"){
+              product.countInStock -= parseFloat((parseFloat(quantityDifference) / parseFloat(parseFloat(item.length) * parseFloat(item.breadth))).toFixed(2));
+            }else {
+              product.countInStock -= parseFloat(quantityDifference);
+            }
           }
 
           // Ensure stock is not negative

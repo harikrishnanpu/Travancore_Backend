@@ -1037,6 +1037,22 @@ billingRouter.put('/update-delivery/update', async (req, res) => {
 });
 
 
+billingRouter.post('/bill/cancel', async (req, res) => {
+  try{
+    const bill = await Billing.findOne({invoiceNo: req.body.invoiceNo})
+    if(bill){
+     await bill.save();
+    }else{
+      res.status(404).json({ message: "not found" })
+    }
+
+    await bill.save()
+  }catch(error){
+    res.status(500).json({message: "error occured"})
+  }
+});
+
+
 
 
 
