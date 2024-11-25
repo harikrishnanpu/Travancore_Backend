@@ -4,6 +4,8 @@ import Product from "../models/productModel.js";
 import Damage from "../models/damageModal.js";
 import Log from "../models/Logmodal.js";
 const returnRouter = express.Router();
+import mongoose from "mongoose";
+import Billing from "../models/billingModal.js";
 
 
 returnRouter.get('/',async (req,res)=>{
@@ -17,11 +19,65 @@ returnRouter.get('/',async (req,res)=>{
 
 // Create new return
 returnRouter.post('/create', async (req, res) => {
-  const session = await Return.startSession();
+  const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const { returnNo, selectedBillingNo, returnDate, customerName, customerAddress, products } = req.body;
+    const {
+      returnNo,
+      billingNo,
+      returnDate,
+      customerName,
+      customerAddress,
+      products,
+      returnAmount,
+      totalTax,
+      netReturnAmount,
+    } = req.body;
+
+    // Validate required fields
+    if (
+      !returnNo ||
+      !billingNo ||
+      !returnDate ||
+      !customerName ||
+      !customerAddress ||
+      !Array.isArray(products) ||
+      products.length === 0 ||
+      returnAmount === undefined ||
+      totalTax === undefined ||
+      netReturnAmount === undefined
+    ) {
+      throw new Error('All fields are required and must be valid.');
+    }
+
+    // Check for unique returnNo
+    const existingReturn = await Return.findOne({ returnNo }).session(session);
+    if (existingReturn) {
+      throw new Error(`Return with Return No ${returnNo} already exists.`);
+    }
+
+    // Validate Billing Number
+    const billing = await Billing.findOne({ invoiceNo: billingNo }).session(session);
+    if (!billing) {
+      throw new Error(`Billing number ${billingNo} not found.`);
+    }
+
+    // Validate returned quantities against delivered quantities
+    for (const product of products) {
+      const billingProduct = billing.products.find(p => p.item_id === product.item_id);
+      if (!billingProduct) {
+        throw new Error(`Product with ID ${product.item_id} not found in billing.`);
+      }
+
+      // Assuming 'deliveredQuantity' is the field that tracks delivered amount
+      const availableForReturn = billingProduct.deliveredQuantity - (billingProduct.returnedQuantity || 0);
+      if (product.quantity > availableForReturn) {
+        throw new Error(
+          `Returned quantity for ${product.name} exceeds available quantity. Available for return: ${availableForReturn}`
+        );
+      }
+    }
 
     // Filter out products with quantity 0
     const filteredProducts = products.filter((product) => product.quantity > 0);
@@ -29,44 +85,58 @@ returnRouter.post('/create', async (req, res) => {
     // Create new return
     const newReturn = new Return({
       returnNo,
-      billingNo: selectedBillingNo,
+      billingNo,
       returnDate,
       customerName,
       customerAddress,
+      returnAmount,
+      totalTax,
+      netReturnAmount,
       products: filteredProducts,
     });
 
     // Save the return
     const savedReturn = await newReturn.save({ session });
 
-    // Update countInStock for each product
+    // Update countInStock for each product and billing's returnedQuantity
     for (const product of filteredProducts) {
       const updatedProduct = await Product.findOne({ item_id: product.item_id }).session(session);
 
       if (!updatedProduct) {
-        throw new Error(`Product with ID ${product.item_id} not found`);
+        throw new Error(`Product with ID ${product.item_id} not found.`);
       }
 
       // Adjust countInStock (increase if product is returned)
       updatedProduct.countInStock += parseFloat(product.quantity);
-
       await updatedProduct.save({ session });
+
+      // Update returnedQuantity in Billing
+      const billingProduct = billing.products.find(p => p.item_id === product.item_id);
+      billingProduct.returnedQuantity = (billingProduct.returnedQuantity || 0) + product.quantity;
     }
+
+    // Optionally, recalculate Billing's financials if necessary
+    // Example: Adjust billingAmountReceived or paymentStatus based on returns
+
+    await billing.save({ session });
 
     // Commit the transaction
     await session.commitTransaction();
     session.endSession();
 
-    res.json(savedReturn);
+    res.status(201).json({
+      message: 'Return created successfully.',
+      return: savedReturn,
+    });
   } catch (error) {
     // Abort the transaction in case of an error
     await session.abortTransaction();
     session.endSession();
 
-    res.status(500).json({ message: 'Error creating return or updating stock', error });
+    console.error('Error creating return:', error);
+    res.status(400).json({ message: error.message });
   }
 });
-
 
 
   // POST /api/damage/create

@@ -23,6 +23,10 @@ const BillingSchema = new mongoose.Schema(
     endKm: { type: Number, default: 0 },
     fuelCharge: { type: Number, default: 0 },
     marketedBy: { type: String },
+    unloading: {type: Number, default: 0},
+    transportation: { type: Number, default: 0},
+    handlingCharge: {type: Number, default: 0},
+    remark: {type: String, default: 0},
     otherExpenses: [
       {
         amount: { type: Number },
@@ -54,6 +58,7 @@ const BillingSchema = new mongoose.Schema(
         amount: { type: Number, required: true },
         method: { type: String, required: true },
         date: { type: Date, default: Date.now },
+        remark: { type: String }
       },
     ],
     deliveryIds: [String], // Keep track of all delivery IDs related to this billing
@@ -78,6 +83,7 @@ const BillingSchema = new mongoose.Schema(
           {
             item_id: String,
             deliveredQuantity: Number,
+            psRatio: String
           },
         ],
         deliveryStatus: String,

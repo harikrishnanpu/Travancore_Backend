@@ -1,47 +1,48 @@
-// models/Purchase.js
 import mongoose from "mongoose";
-
-const paymentSchema = mongoose.Schema({
-  amount: { type: Number, required: true },
-  method: { type: String, required: true },
-  remark: { type: String },
-  date: { type: Date, default: Date.now },
-});
-
 const purchaseSchema = mongoose.Schema(
   {
     sellerName: { type: String, required: true },
+    sellerId: { type: String, required: true},
     invoiceNo: { type: String, required: true },
-    purchaseId: { type: String },
-    sellerAddress: { type: String },
-    sellerGst: { type: String },
-    billingDate: { type: Date },
-    invoiceDate: { type: Date },
-    totalAmount: { type: Number, required: true, default: 0 },
-    paymentStatus: { type: String, default: "Pending" },
     items: [
       {
         itemId: { type: String, required: true },
-        name: { type: String },
-        quantity: { type: Number },
-        pUnit: { type: String },
+        name: { type: String, required: true },
         brand: { type: String },
         category: { type: String },
-        price: { type: Number },
+        quantity: { type: Number, required: true },
         sUnit: { type: String },
-        psRatio: { type: String },
-        length: { type: String },
-        breadth: { type: String },
-        size: { type: String },
+        psRatio: { type: Number },
+        length: { type: Number },
+        breadth: { type: Number },
+        size: { type: Number },
+        pUnit: { type: String },
+        cashPartPrice: { type: Number, required: true },
+        billPartPrice: { type: Number, required: true },
       },
     ],
-    payments: [paymentSchema], // Added payments array
+    purchaseId: { type: String, unique: true, required: true },
+    sellerAddress: { type: String },
+    sellerGst: { type: String },
+    billingDate: { type: Date, required: true },
+    invoiceDate: { type: Date, required: true },
+    totals: {
+      billPartTotal: { type: Number, required: true},
+      cashPartTotal: { type: Number, required: true},
+      amountWithoutGSTItems: { type: Number, required:true },
+      gstAmountItems: { type: Number, required: true},
+      cgstItems: { type: Number, required: true},
+      sgstItems: { type: Number, required: true},
+      amountWithoutGSTTransport: { type: Number, default: 0},
+      gstAmountTransport: { type: Number, default:0},
+      cgstTransport: { type: Number, default: 0},
+      sgstTransport: { type: Number, default:0},
+      totalPurchaseAmount: { type: Number, required: true},
+      transportationCharges: { type: Number, default: 0}
+    }
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-const Purchase = mongoose.model("Purchase", purchaseSchema);
-
+const Purchase = mongoose.model('Purchase', purchaseSchema);
 export default Purchase;

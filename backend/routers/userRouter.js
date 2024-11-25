@@ -12,6 +12,7 @@ import Product from '../models/productModel.js';
 import Purchase from '../models/purchasemodals.js';
 import Damage from '../models/damageModal.js';
 import Log from '../models/Logmodal.js';
+import PaymentsAccount from '../models/paymentsAccountModal.js';
 
 const userRouter = express.Router();
 
@@ -574,7 +575,7 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
 
 userRouter.post("/billing/update-payment", async (req, res) => {
   try {
-    const { invoiceNo, paymentAmount, paymentMethod } = req.body;
+    const { invoiceNo, paymentAmount, paymentMethod, userId } = req.body;
 
     // Validate required fields
     if (!invoiceNo || !paymentAmount || !paymentMethod) {
@@ -585,6 +586,31 @@ userRouter.post("/billing/update-payment", async (req, res) => {
     const billing = await Billing.findOne({ invoiceNo });
     if (!billing) {
       return res.status(404).json({ error: "Billing not found" });
+    }
+
+    const parsedPaymentAmount = parseFloat(paymentAmount).toFixed(2);
+
+    const accountPaymentEntry = {
+      amount: parsedPaymentAmount,
+      method: paymentMethod,
+      remark: `Bill ${invoiceNo}`,
+      submittedBy: userId,
+    };
+  
+    try {
+      const account = await PaymentsAccount.findOne({ accountId: paymentMethod });
+    
+      if (!account) {
+        console.log(`No account found for accountId: ${paymentMethod}`);
+        return res.status(404).json({ message: 'Payment account not found' });
+      }
+    
+      account.paymentsIn.push(accountPaymentEntry);
+    
+      await account.save();
+    } catch (error) {
+      console.error('Error processing payment:', error);
+      return res.status(500).json({ message: 'Error processing payment', error });
     }
 
     // Add the new payment using the model's method
@@ -667,6 +693,27 @@ userRouter.get('/all/deliveries', async (req, res) => {
     res.status(500).json({ message: 'Error fetching deliveries' });
   }
 });
+
+
+userRouter.get('/driver/getPSratio/:id', async (req, res) => {
+  try {
+    const product = await Product.findOne({ item_id: req.params.id });
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+
+    if (product.psRatio === undefined || product.psRatio === null || isNaN(parseFloat(product.psRatio))) {
+      return res.status(400).json({ message: 'Invalid PS Ratio for this product' });
+    }
+
+    const psRatio = parseFloat(product.psRatio);
+    return res.status(200).json({ psRatio });
+  } catch (error) {
+    console.error('Error fetching PS ratio:', error);
+    return res.status(500).json({ message: 'Error fetching PS Ratio' });
+  }
+});
+
 
 
 

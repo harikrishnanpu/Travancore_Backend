@@ -15,6 +15,7 @@ import {
 } from '../utils.js';
 import Purchase from '../models/purchasemodals.js';
 import Log from '../models/Logmodal.js';
+import Transportation from '../models/transportModal.js';
 
 const orderRouter = express.Router();
 
@@ -50,118 +51,20 @@ orderRouter.get('/purchase/:id', async (req, res) => {
   }
 });
 
-orderRouter.put('/purchase/:purchaseId', expressAsyncHandler(async (req, res) => {
-  const { purchaseId } = req.params;
-  const { sellerName, sellerId, invoiceNo, items } = req.body;
-
+orderRouter.get('/transport/:id', async (req, res) => {
   try {
-    // Find the existing purchase
-    const existingPurchase = await Purchase.findById(purchaseId);
-    if (!existingPurchase) {
-      return res.status(404).json({ message: "Purchase not found" });
+    const transport = await Transportation.find({ purchaseId: req.params.id });
+    if (!transport) {
+      console.log("not found")
+      return res.status(500).json({ message: 'Billing not found' });
     }
-
-    // Create a map of old item quantities for easy lookup
-    const oldItemMap = new Map();
-    for (const item of existingPurchase.items) {
-      oldItemMap.set(item.itemId, item.quantity);
-    }
-
-    // Iterate over the new items to adjust stock values accordingly
-    for (const item of items) {
-      const product = await Product.findOne({ item_id: item.itemId });
-
-      if (product) {
-        const oldQuantity = oldItemMap.get(item.itemId) || 0; // Default to 0 if item wasn't in the old purchase
-        const newQuantity = parseFloat(item.quantity);
-
-        if (newQuantity === 0) {
-
-          if(item.pUnit == "BOX"){
-            product.countInStock -= parseFloat((parseFloat(oldQuantity) * parseFloat(item.psRatio)).toFixed(2));
-          }else if(item.pUnit == "SQFT"){
-            product.countInStock -= parseFloat((parseFloat(oldQuantity) / parseFloat(parseFloat(item.length) * parseFloat(item.breadth))).toFixed(2));
-          }else {
-            product.countInStock -= parseFloat(oldQuantity);
-          }
-
-          // Remove the item from the purchase
-          await Purchase.updateOne(
-            { _id: purchaseId },
-            { $pull: { items: { itemId: item.itemId } } }
-          );
-        } else {
-          // If the new quantity is greater than the old, increase stock
-          if (newQuantity > oldQuantity) {
-            const quantityDifference = newQuantity - oldQuantity;
-            if(item.pUnit == "BOX"){
-              product.countInStock += parseFloat((parseFloat(quantityDifference) * parseFloat(item.psRatio)).toFixed(2));
-            }else if(item.pUnit == "SQFT"){
-              product.countInStock += parseFloat((parseFloat(quantityDifference) / parseFloat(parseFloat(item.length) * parseFloat(item.breadth))).toFixed(2));
-            }else {
-              product.countInStock += parseFloat(quantityDifference);
-            }
-          } else if (newQuantity < oldQuantity) {
-            // If the new quantity is less, increase stock
-            const quantityDifference = oldQuantity - newQuantity;
-
-            if(item.pUnit == "BOX"){
-              product.countInStock -= parseFloat((parseFloat(quantityDifference) * parseFloat(item.psRatio)).toFixed(2));
-            }else if(item.pUnit == "SQFT"){
-              product.countInStock -= parseFloat((parseFloat(quantityDifference) / parseFloat(parseFloat(item.length) * parseFloat(item.breadth))).toFixed(2));
-            }else {
-              product.countInStock -= parseFloat(quantityDifference);
-            }
-          }
-
-          // Ensure stock is not negative
-          if (product.countInStock < 0) {
-            throw new Error(`Insufficient stock for product: ${product.name}`);
-          }
-
-          // Update product price
-          product.price = parseFloat(item.price);
-        }
-
-        // Save the updated product stock
-        await product.save();
-      } else {
-          const newProduct = new Product({
-            name: item.name,
-            item_id: item.itemId,
-            brand: item.brand,
-            category: item.category,
-            countInStock: item.quantity,
-            // Add other necessary fields here (e.g., description, price, etc.)
-          });
-          await newProduct.save();
-          console.log("product saved")
-      }
-    }
-
-    // Filter out items with zero quantity for the updated items list
-    const updatedItems = items.filter(item => item.quantity > 0);
-
-    if (updatedItems.length === 0) {
-      // If no items left, delete the purchase
-      await Purchase.findByIdAndDelete(purchaseId);
-      return res.status(200).json({ message: "Purchase deleted as there were no items left" });
-    }
-
-    // Update the existing purchase with the new data
-    existingPurchase.sellerName = sellerName;
-    existingPurchase.sellerId = sellerId;
-    existingPurchase.invoiceNo = invoiceNo;
-    existingPurchase.items = updatedItems;
-
-    const updatedPurchase = await existingPurchase.save();
-    res.status(200).json(updatedPurchase);
-
+    console.log(transport);
+    res.status(200).json(transport);
   } catch (error) {
-    console.error("Error occurred:", error);
-    res.status(500).json({ message: "An error occurred", error: error.message });
+    console.error('Error fetching purchase:', error);
+    res.status(500).json({ message: 'Error fetching purchase', error });
   }
-}));
+});
 
 
 

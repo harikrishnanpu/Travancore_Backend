@@ -7,6 +7,9 @@ import { isAdmin, isAuth } from '../utils.js';
 import asyncHandler from 'express-async-handler';
 import Purchase from '../models/purchasemodals.js';
 import Log from '../models/Logmodal.js';
+import Transportation from '../models/transportModal.js';
+import SellerPayment from '../models/sellerPayments.js';
+import TransportPayment from '../models/transportPayments.js';
 
 
 const productRouter = express.Router();
@@ -395,64 +398,11 @@ productRouter.post(
 );
 
 
-productRouter.post('/purchase', asyncHandler(async (req, res) => {
-  const {
-    sellerName,
-    invoiceNo,
-    items,
-    purchaseId,
-    sellerAddress,
-    sellerGst,
-    billingDate,
-    totalAmount,
-    invoiceDate,
-  } = req.body;
-
-  try {
-    for (const item of items) {
-      const existingProduct = await Product.findOne({ item_id: item.itemId });
-
-      if (existingProduct) {
-        existingProduct.price = parseFloat(item.price);
-        existingProduct.sUnit = item.sUnit;
-        existingProduct.psRatio = item.psRatio;
-        existingProduct.length = item.length;
-        existingProduct.breadth = item.breadth;
-        existingProduct.size = item.size;
-        existingProduct.pUnit = item.pUnit;
-        existingProduct.brand = item.brand;
-        existingProduct.category = item.category;
-        existingProduct.name = item.name;
-        if(item.pUnit == "BOX"){
-          existingProduct.countInStock += parseFloat((parseFloat(item.quantity) * parseFloat(item.psRatio)).toFixed(2));
-        }else if(item.pUnit == "SQFT"){
-          existingProduct.countInStock += parseFloat((parseFloat(item.quantity) / parseFloat(parseFloat(item.length) * parseFloat(item.breadth))).toFixed(2));
-        }else {
-          existingProduct.countInStock += parseFloat(item.quantity);
-        }
-        await existingProduct.save();
-        console.log(`Updated existing product: ${existingProduct.item_id}`);
-      } else {
-        const newProduct = new Product({
-          name: item.name,
-          item_id: item.itemId,
-          brand: item.brand,
-          category: item.category,
-          price: parseFloat(item.price),
-          countInStock: parseFloat(item.quantity),
-          sUnit: item.sUnit,
-          psRatio: item.psRatio,
-          length: item.length,
-          breadth: item.breadth,
-          size: item.size,
-          pUnit: item.pUnit,
-        });
-        await newProduct.save();
-        console.log(`Product saved: ${newProduct.item_id}`);
-      }
-    }
-
-    const purchase = new Purchase({
+productRouter.post(
+  '/purchase',
+  asyncHandler(async (req, res) => {
+    const {
+      sellerId,
       sellerName,
       invoiceNo,
       items,
@@ -461,16 +411,503 @@ productRouter.post('/purchase', asyncHandler(async (req, res) => {
       sellerGst,
       billingDate,
       invoiceDate,
-      totalAmount
-    });
+      totals,
+      transportationDetails,
+    } = req.body;
 
-    const createdPurchase = await purchase.save();
-    res.status(201).json(createdPurchase);
-  } catch (error) {
-    console.error('Error in /purchase route:', error);
-    res.status(500).json({ message: "An error occurred" });
+    try {
+      // Handle product updates or creation
+      for (const item of items) {
+        const existingProduct = await Product.findOne({ item_id: item.itemId });
+
+        // Calculate stock adjustment
+        let quantity = 0;
+        if (item.pUnit === 'BOX') {
+          quantity = item.quantity * item.psRatio;
+        } else if (item.pUnit === 'SQFT') {
+          quantity = item.quantity / (item.length * item.breadth);
+        } else {
+          quantity = item.quantity;
+        }
+
+        if (existingProduct) {
+          existingProduct.countInStock += parseFloat(quantity.toFixed(2));
+          existingProduct.price = parseFloat(item.billPrice + item.cashPrice);
+          Object.assign(existingProduct, item); // Update product fields
+          await existingProduct.save();
+        } else {
+          const newProduct = new Product({
+            item_id: item.itemId,
+            ...item,
+            countInStock: parseFloat(quantity.toFixed(2)),
+          });
+          await newProduct.save();
+        }
+      }
+
+      // Save purchase details
+      const purchase = new Purchase({
+        sellerId,
+        sellerName,
+        invoiceNo,
+        items: items.map((item) => ({
+          ...item,
+        })),
+        purchaseId,
+        sellerAddress,
+        sellerGst,
+        billingDate,
+        invoiceDate,
+        totals,
+      });
+
+      await purchase.save();
+
+  // Save transportation details
+// Save transportation details
+if (transportationDetails) {
+  const { logistic, local } = transportationDetails;
+
+  // Validate and log logistic details
+  if (logistic) {
+
+    // Check if required fields are present
+    if (logistic.transportCompanyName && logistic.transportationCharges !== undefined) {
+      const logisticTransport = new Transportation({
+        purchaseId: logistic.purchaseId,
+        invoiceNo: logistic.invoiceNo,
+        transportType: "logistic",
+        companyGst: logistic.companyGst,
+        billId: logistic.billId,
+        transportCompanyName: logistic.transportCompanyName,
+        transportationCharges: logistic.transportationCharges,
+        remarks: logistic.remark, // Adjusted to match schema naming
+      });
+
+      await logisticTransport.save();
+
+
+         // Create billing entry for TransportPayment
+         const logisticBillingEntry = {
+          amount: logistic.transportationCharges,
+          date: logistic.billingDate || Date.now(),
+          billId: logistic.billId,
+          invoiceNo: logistic.invoiceNo,
+        };
+  
+        // Find existing TransportPayment
+        const logisticTransportPayment = await TransportPayment.findOne({
+          transportName: logistic.transportCompanyName,
+          transportType: "logistic",
+        });
+  
+        if (logisticTransportPayment) {
+          // Update existing TransportPayment
+          await logisticTransportPayment.addBilling(logisticBillingEntry);
+        } else {
+          // Create new TransportPayment
+          const newLogisticTransportPayment = new TransportPayment({
+            transportName: logistic.transportCompanyName,
+            transportType: "logistic",
+            payments: [],
+            billings: [],
+          });
+  
+          await newLogisticTransportPayment.addBilling(logisticBillingEntry);
+        }
+    } else {
+      console.error("Logistic details missing required fields:", logistic);
+    }
   }
-}));
+
+  // Validate and log local details
+  if (local) {
+
+    // Check if required fields are present
+    if (local.transportCompanyName && local.transportationCharges !== undefined) {
+      const localTransport = new Transportation({
+        purchaseId: local.purchaseId,
+        invoiceNo: local.invoiceNo,
+        transportType: "local",
+        billId: local.billId,
+        companyGst: local.companyGst,
+        transportCompanyName: local.transportCompanyName,
+        transportationCharges: local.transportationCharges,
+        remarks: local.remark, // Adjusted to match schema naming
+      });
+
+      await localTransport.save();
+
+
+
+      // Create billing entry for TransportPayment
+      const localBillingEntry = {
+        amount: local.transportationCharges,
+        date: local.billingDate || Date.now(),
+        billId: local.billId,
+        invoiceNo: local.invoiceNo,
+      };
+
+      // Find existing TransportPayment
+      const localTransportPayment = await TransportPayment.findOne({
+        transportName: local.transportCompanyName,
+        transportType: "local",
+      });
+
+      if (localTransportPayment) {
+        // Update existing TransportPayment
+        await localTransportPayment.addBilling(localBillingEntry);
+      } else {
+        // Create new TransportPayment
+        const newLocalTransportPayment = new TransportPayment({
+          transportName: local.transportCompanyName,
+          transportType: "local",
+          payments: [],
+          billings: [],
+        });
+
+        await newLocalTransportPayment.addBilling(localBillingEntry);
+      }
+
+    } else {
+      console.error("Local details missing required fields:", local);
+    }
+  }
+}
+
+
+      // Add billing to SellerPayment
+      const sellerPayment = await SellerPayment.findOne({ sellerId });
+
+      const billingEntry = {
+        amount: totals.totalPurchaseAmount,
+        date: billingDate || Date.now(),
+        purchaseId: purchaseId,
+        invoiceNo: invoiceNo,
+      };
+
+      if (sellerPayment) {
+        sellerPayment.billings.push(billingEntry);
+        sellerPayment.totalAmountBilled = sellerPayment.billings.reduce(
+          (sum, billing) => sum + billing.amount,
+          0
+        );
+        sellerPayment.paymentRemaining = sellerPayment.totalAmountBilled - sellerPayment.totalAmountPaid;
+        await sellerPayment.save();
+      } else {
+        const newSellerPayment = new SellerPayment({
+          sellerId,
+          sellerName,
+          payments: [],
+          billings: [billingEntry],
+          totalAmountBilled: totals.totalPurchaseAmount,
+          totalAmountPaid: 0,
+          paymentRemaining: totals.totalPurchaseAmount,
+        });
+
+        await newSellerPayment.save();
+      }
+
+      res.status(201).json({ message: 'Purchase created successfully' });
+    } catch (error) {
+      console.log(error);
+      res.status(500).json({ message: 'Error creating purchase', error });
+    }
+  })
+);
+
+productRouter.put(
+  '/purchase/:purchaseId',
+  asyncHandler(async (req, res) => {
+    const { purchaseId } = req.params;
+    const {
+      sellerId,
+      sellerName,
+      invoiceNo,
+      items,
+      sellerAddress,
+      sellerGst,
+      billingDate,
+      invoiceDate,
+      totals,
+      transportationDetails,
+    } = req.body;
+
+    try {
+      const existingPurchase = await Purchase.findById(purchaseId);
+      if (!existingPurchase) {
+        return res.status(404).json({ message: 'Purchase not found' });
+      }
+
+      // Map old quantities for stock adjustment
+      const oldItemMap = new Map();
+      for (const item of existingPurchase.items) {
+        oldItemMap.set(item.itemId, item.quantity);
+      }
+
+      for (const item of items) {
+        const product = await Product.findOne({ item_id: item.itemId });
+
+        let oldQuantity = 0;
+        if (oldItemMap.has(item.itemId)) {
+          const oldItem = existingPurchase.items.find((i) => i.itemId === item.itemId);
+          if (oldItem.pUnit === 'BOX') {
+            oldQuantity = oldItem.quantity * oldItem.psRatio;
+          } else if (oldItem.pUnit === 'SQFT') {
+            oldQuantity = oldItem.quantity / (oldItem.length * oldItem.breadth);
+          } else {
+            oldQuantity = oldItem.quantity;
+          }
+        }
+
+        let newQuantity = 0;
+        if (item.pUnit === 'BOX') {
+          newQuantity = item.quantity * item.psRatio;
+        } else if (item.pUnit === 'SQFT') {
+          newQuantity = item.quantity / (item.length * item.breadth);
+        } else {
+          newQuantity = item.quantity;
+        }
+
+        if (product) {
+          product.countInStock += newQuantity - oldQuantity;
+          product.price = parseFloat(item.billPrice + item.cashPrice);
+          Object.assign(product, item); // Update product fields
+          await product.save();
+        }
+      }
+
+      // Update purchase details
+      existingPurchase.sellerId = sellerId;
+      existingPurchase.sellerName = sellerName;
+      existingPurchase.invoiceNo = invoiceNo;
+      existingPurchase.items = items.map((item) => ({
+        ...item,
+      }));
+      existingPurchase.sellerAddress = sellerAddress;
+      existingPurchase.sellerGst = sellerGst;
+      existingPurchase.billingDate = billingDate;
+      existingPurchase.invoiceDate = invoiceDate;
+      existingPurchase.totals = totals;
+
+      await existingPurchase.save();
+
+      // Update transportation details
+      if (transportationDetails) {
+        const { logistic, local } = transportationDetails;
+
+        // Update logistic transportation details
+        if (logistic && logistic.transportCompanyName && logistic.transportationCharges !== undefined) {
+          const logisticTransport = await Transportation.findOneAndUpdate(
+            { purchaseId, transportType: 'logistic' },
+            {
+              purchaseId: logistic.purchaseId,
+              invoiceNo: logistic.invoiceNo,
+              transportType: 'logistic',
+              billId: logistic.billId,
+              companyGst: logistic.companyGst,
+              transportCompanyName: logistic.transportCompanyName,
+              transportationCharges: parseFloat(logistic.transportationCharges), // Ensure it's correctly parsed
+              remarks: logistic.remark,
+            },
+            { upsert: true, new: true }
+          );
+
+
+           // Update transport payments for logistic transport
+           const logisticTransportPayment = await TransportPayment.findOne({
+            transportName: logistic.transportCompanyName,
+            transportType: 'logistic',
+          });
+
+          const logisticBillingEntry = {
+            amount: parseFloat(logistic.transportationCharges),
+            date: logistic.billingDate || Date.now(),
+            billId: logistic.billId,
+            invoiceNo: logistic.invoiceNo,
+          };
+
+          if (logisticTransportPayment) {
+            // Find existing billing
+            const billingIndex = logisticTransportPayment.billings.findIndex(
+              (billing) => billing.billId === logistic.billId
+            );
+
+            if (billingIndex !== -1) {
+              // Update existing billing
+              logisticTransportPayment.billings[billingIndex] = logisticBillingEntry;
+            } else {
+              // Add new billing
+              logisticTransportPayment.billings.push(logisticBillingEntry);
+            }
+
+            // Recalculate totals
+            logisticTransportPayment.totalAmountBilled = logisticTransportPayment.billings.reduce(
+              (sum, billing) => sum + billing.amount,
+              0
+            );
+            logisticTransportPayment.paymentRemaining =
+              logisticTransportPayment.totalAmountBilled - logisticTransportPayment.totalAmountPaid;
+
+            await logisticTransportPayment.save();
+          } else {
+            // Create new TransportPayment
+            const newLogisticTransportPayment = new TransportPayment({
+              transportName: logistic.transportCompanyName,
+              transportType: 'logistic',
+              payments: [],
+              billings: [logisticBillingEntry],
+              totalAmountBilled: parseFloat(logistic.transportationCharges),
+              totalAmountPaid: 0,
+              paymentRemaining: parseFloat(logistic.transportationCharges),
+            });
+
+            await newLogisticTransportPayment.save();
+          }
+
+
+        }
+
+        // Update local transportation details
+        if (local && local.transportCompanyName && local.transportationCharges !== undefined) {
+          const localTransport = await Transportation.findOneAndUpdate(
+            { purchaseId, transportType: 'local' },
+            {
+              purchaseId: local.purchaseId,
+              invoiceNo: local.invoiceNo,
+              transportType: 'local',
+              billId: local.billId,
+              companyGst: local.companyGst,
+              transportCompanyName: local.transportCompanyName,
+              transportationCharges: parseFloat(local.transportationCharges), // Ensure it's correctly parsed
+              remarks: local.remark,
+            },
+            { upsert: true, new: true }
+          );
+
+
+          // Update transport payments for local transport
+          const localTransportPayment = await TransportPayment.findOne({
+            transportName: local.transportCompanyName,
+            transportType: 'local',
+          });
+
+          const localBillingEntry = {
+            amount: parseFloat(local.transportationCharges),
+            date: local.billingDate || Date.now(),
+            billId: local.billId,
+            invoiceNo: local.invoiceNo,
+          };
+
+          if (localTransportPayment) {
+            // Find existing billing
+            const billingIndex = localTransportPayment.billings.findIndex(
+              (billing) => billing.billId === local.billId
+            );
+
+            if (billingIndex !== -1) {
+              // Update existing billing
+              localTransportPayment.billings[billingIndex] = localBillingEntry;
+            } else {
+              // Add new billing
+              localTransportPayment.billings.push(localBillingEntry);
+            }
+
+            // Recalculate totals
+            localTransportPayment.totalAmountBilled = localTransportPayment.billings.reduce(
+              (sum, billing) => sum + billing.amount,
+              0
+            );
+            localTransportPayment.paymentRemaining =
+              localTransportPayment.totalAmountBilled - localTransportPayment.totalAmountPaid;
+
+            await localTransportPayment.save();
+          } else {
+            // Create new TransportPayment
+            const newLocalTransportPayment = new TransportPayment({
+              transportName: local.transportCompanyName,
+              transportType: 'local',
+              payments: [],
+              billings: [localBillingEntry],
+              totalAmountBilled: parseFloat(local.transportationCharges),
+              totalAmountPaid: 0,
+              paymentRemaining: parseFloat(local.transportationCharges),
+            });
+
+            await newLocalTransportPayment.save();
+          }
+          
+        }
+      }
+
+
+
+       // Update billing in SellerPayment
+       const sellerPayment = await SellerPayment.findOne({ sellerId });
+       if (sellerPayment) {
+         const billingIndex = sellerPayment.billings.findIndex(
+           (billing) => billing.purchaseId === purchaseId
+         );
+ 
+         if (billingIndex !== -1) {
+           // Update existing billing
+           sellerPayment.billings[billingIndex] = {
+             amount: totals.totalPurchaseAmount,
+             date: billingDate || Date.now(),
+             purchaseId: purchaseId,
+             invoiceNo: invoiceNo,
+           };
+         } else {
+           // Add new billing if not found
+           sellerPayment.billings.push({
+             amount: totals.totalPurchaseAmount,
+             date: billingDate || Date.now(),
+             purchaseId: purchaseId,
+             invoiceNo: invoiceNo,
+           });
+         }
+ 
+         // Recalculate totals
+         sellerPayment.totalAmountBilled = sellerPayment.billings.reduce(
+           (sum, billing) => sum + billing.amount,
+           0
+         );
+         sellerPayment.paymentRemaining = sellerPayment.totalAmountBilled - sellerPayment.totalAmountPaid;
+ 
+         await sellerPayment.save();
+       } else {
+         // Create new SellerPayment document if none exists
+         const newSellerPayment = new SellerPayment({
+           sellerId,
+           sellerName,
+           payments: [],
+           billings: [
+             {
+               amount: totals.totalPurchaseAmount,
+               date: billingDate || Date.now(),
+               purchaseId: purchaseId,
+               invoiceNo: invoiceNo,
+             },
+           ],
+           totalAmountBilled: totals.totalPurchaseAmount,
+           totalAmountPaid: 0,
+           paymentRemaining: totals.totalPurchaseAmount,
+         });
+ 
+         await newSellerPayment.save();
+       }
+
+      res.status(200).json({ message: 'Purchase updated successfully', purchase: existingPurchase });
+    } catch (error) {
+      console.error('Error updating purchase:', error);
+      res.status(500).json({ message: 'Error updating purchase', error });
+    }
+  })
+);
+
+
+
+
 
 
 

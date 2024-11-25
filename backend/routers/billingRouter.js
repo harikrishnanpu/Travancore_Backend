@@ -5,12 +5,16 @@ import Log from '../models/Logmodal.js';
 import mongoose from 'mongoose';
 import Purchase from '../models/purchasemodals.js';
 import User from '../models/userModel.js';
+import PaymentsAccount from '../models/paymentsAccountModal.js';
 
 const billingRouter = express.Router();
 
 // Create a new billing entry
 
 // POST /create - Create a new billing record
+// =========================
+// Route: Create Billing Entry
+// =========================
 billingRouter.post('/create', async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -31,12 +35,15 @@ billingRouter.post('/create', async (req, res) => {
       paymentMethod,
       paymentReceivedDate,
       salesmanPhoneNumber,
+      unloading,
+      transportation,
+      handlingcharge,
+      remark,
       userId,
       products // Expected to be an array of objects with item_id and quantity
     } = req.body;
 
-
-    let  invoiceNo = req.body.invoiceNo;
+    let invoiceNo = req.body.invoiceNo;
 
     // -----------------------
     // 1. Validate Required Fields
@@ -64,28 +71,28 @@ billingRouter.post('/create', async (req, res) => {
     if (existingBill) {
       // Find the latest invoiceNo that starts with 'KK' and is followed by digits
       const latestInvoice = await Billing.findOne({ invoiceNo: /^KK\d+$/ })
-      .sort({ invoiceNo: -1 })
-      .collation({ locale: "en", numericOrdering: true });
-    
+        .sort({ invoiceNo: -1 })
+        .collation({ locale: "en", numericOrdering: true })
+        .session(session);
+
       if (!latestInvoice) {
         // If no invoice exists, start with 'KK001'
-        return 'KK001';
+        invoiceNo = 'KK1';
+      } else {
+        const latestInvoiceNo = latestInvoice.invoiceNo;
+        const numberPart = parseInt(latestInvoiceNo.replace('KK', ''), 10);
+
+        // Increment the numerical part
+        const nextNumber = numberPart + 1;
+
+        // Format the next number with leading zeros to maintain a 3-digit format
+        const nextInvoiceNo = `KK${nextNumber.toString()}`;
+        console.log(`Invoice number ${invoiceNo} exists. Assigning next invoice number: ${nextInvoiceNo}`);
+
+        // Assign the new invoice number to the request body
+        invoiceNo = nextInvoiceNo;
       }
-    
-      const latestInvoiceNo = latestInvoice.invoiceNo;
-      const numberPart = parseInt(latestInvoiceNo.replace('KK', ''), 10);
-    
-      // Increment the numerical part
-      const nextNumber = numberPart + 1;
-    
-      // Format the next number with leading zeros to maintain a 3-digit format
-      const nextInvoiceNo = `KK${nextNumber.toString()}`;
-      console.log(`Invoice number ${invoiceNo} exists. Assigning next invoice number: ${nextInvoiceNo}`);
-    
-      // Assign the new invoice number to the request body
-      req.body.invoiceNo = nextInvoiceNo;
-      invoiceNo = nextInvoiceNo;
-      }
+    }
 
     // -----------------------
     // 3. Calculate Total Amount After Discount
@@ -113,40 +120,16 @@ billingRouter.post('/create', async (req, res) => {
     }
 
     // -----------------------
-    // 4. Validate Products and Update Stock
+    // 4. Fetch and Validate User
     // -----------------------
-    const productUpdatePromises = [];
-    for (const item of products) {
-      const { item_id, quantity } = item;
-
-      // Validate individual product details
-      if (!item_id || !quantity || isNaN(quantity) || quantity <= 0) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({ message: 'Invalid product details' });
-      }
-
-      // Fetch product using item_id
-      const product = await Product.findOne({ item_id }).session(session);
-      if (!product) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(404).json({ message: `Product with ID ${item_id} not found` });
-      }
-
-      // Check if there is enough stock
-      if (product.countInStock < quantity) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({ message: `Insufficient stock for product ID ${item_id}` });
-      }
-
-      // Deduct the stock
-      product.countInStock -= parseFloat(quantity);
-      productUpdatePromises.push(product.save({ session }));
+    const user = await User.findById(userId).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: 'User not found' });
     }
 
-
+    const isAdmin = user.isAdmin;
 
     // -----------------------
     // 5. Initialize Billing Data
@@ -164,76 +147,151 @@ billingRouter.post('/create', async (req, res) => {
       customerContactNumber,
       marketedBy,
       submittedBy: userId,
+      handlingCharge: handlingcharge,
+      remark: remark,
       products,
-      payments: [] // Initialize payments as an empty array
+      unloading: unloading || 0,
+      transportation: transportation || 0,
+      payments: [], // Initialize payments as an empty array
+      isApproved: isAdmin // Automatically approve if user is admin
     });
+
 
     // -----------------------
     // 6. Add Initial Payment if Provided
     // -----------------------
     if (paymentAmount && paymentMethod) {
       const parsedPaymentAmount = parseFloat(paymentAmount);
-
+    
       // Validate payment amount
       if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ message: 'Invalid payment amount' });
       }
-
+    
       // Ensure paymentAmount does not exceed totalAmount
       if (parsedPaymentAmount > totalAmount) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ message: 'Payment amount cannot exceed total amount after discount' });
       }
-
+    
+      const currentDate = new Date(paymentReceivedDate || Date.now());
+    
       const paymentEntry = {
         amount: parsedPaymentAmount,
         method: paymentMethod,
-        date: paymentReceivedDate ? new Date(paymentReceivedDate) : new Date()
+        date: currentDate,
       };
-
-      // Add the payment to the payments array
-      billingData.payments.push(paymentEntry);
+    
+      const accountPaymentEntry = {
+        amount: parsedPaymentAmount,
+        method: paymentMethod,
+        remark: `Bill ${invoiceNo}`,
+        submittedBy: userId,
+      };
+    
+      try {
+        const account = await PaymentsAccount.findOne({ accountId: paymentMethod });
+      
+        if (!account) {
+          console.log(`No account found for accountId: ${paymentMethod}`);
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(404).json({ message: 'Payment account not found' });
+        }
+      
+        account.paymentsIn.push(accountPaymentEntry);
+      
+        await account.save();
+      
+        // Add the payment to the payments array
+        billingData.payments.push(paymentEntry);
+      } catch (error) {
+        console.error('Error processing payment:', error);
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(500).json({ message: 'Error processing payment', error });
+      }
+      
     }
+    
 
-
-    const user = await User.findOne({ name: salesmanName })
-    if(user){
-      user.contactNumber = salesmanPhoneNumber
-      await user.save();
-    }else{
+    // -----------------------
+    // 7. Update Salesman Phone Number
+    // -----------------------
+    const salesmanUser = await User.findOne({ name: salesmanName }).session(session);
+    if (salesmanUser) {
+      salesmanUser.contactNumber = salesmanPhoneNumber;
+      await salesmanUser.save({ session });
+    } else {
       await session.abortTransaction();
       session.endSession();
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: 'Salesman user not found' });
     }
 
-
-    const AdminUser = await User.findById(userId)
-
-    if(AdminUser){
-
-    if(AdminUser.isAdmin){
+    // -----------------------
+    // 8. Approve Bill if User is Admin
+    // -----------------------
+    if (isAdmin) {
       billingData.isApproved = true;
     }
 
-  }
+    // -----------------------
+    // 9. Conditionally Update Stock
+    // -----------------------
+    let productUpdatePromises = [];
+    if (isAdmin) {
+      // Only update stock if the user is admin during creation
+      for (const item of products) {
+        const { item_id, quantity } = item;
+
+        // Validate individual product details
+        if (!item_id || !quantity || isNaN(quantity) || quantity <= 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ message: 'Invalid product details' });
+        }
+
+        // Fetch product using item_id
+        const product = await Product.findOne({ item_id }).session(session);
+        if (!product) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(404).json({ message: `Product with ID ${item_id} not found` });
+        }
+
+        // Check if there is enough stock
+        if (product.countInStock < quantity) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ message: `Insufficient stock for product ID ${item_id}` });
+        }
+
+        // Deduct the stock
+        product.countInStock -= parseFloat(quantity);
+        productUpdatePromises.push(product.save({ session }));
+      }
+    }
 
     // -----------------------
-    // 7. Save Billing Data and Update Products
+    // 10. Save Billing Data and Update Products
     // -----------------------
     await billingData.save({ session });
-    await Promise.all(productUpdatePromises);
+
+    if (isAdmin) {
+      await Promise.all(productUpdatePromises);
+    }
 
     // -----------------------
-    // 8. Commit the Transaction
+    // 11. Commit the Transaction
     // -----------------------
     await session.commitTransaction();
     session.endSession();
 
     // -----------------------
-    // 9. Respond to Client
+    // 12. Respond to Client
     // -----------------------
     res.status(201).json({ message: 'Billing data saved successfully', billingData });
   } catch (error) {
@@ -249,10 +307,9 @@ billingRouter.post('/create', async (req, res) => {
   }
 });
 
-
-
-
-
+// =========================
+// Route: Edit Billing Entry
+// =========================
 billingRouter.post('/edit/:id', async (req, res) => {
   const billingId = req.params.id;
 
@@ -272,6 +329,10 @@ billingRouter.post('/edit/:id', async (req, res) => {
       customerAddress,
       products,
       discount,
+      unloading,
+      transportation,
+      handlingcharge,
+      remark,
       paymentStatus,
       deliveryStatus,
       customerContactNumber,
@@ -279,6 +340,7 @@ billingRouter.post('/edit/:id', async (req, res) => {
       paymentMethod,
       paymentReceivedDate,
       marketedBy,
+      userId
     } = req.body;
 
     // === 1. Basic Validation ===
@@ -296,6 +358,8 @@ billingRouter.post('/edit/:id', async (req, res) => {
       !products ||
       !Array.isArray(products)
     ) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({
         message:
           'Missing required fields. Ensure all mandatory fields are provided.',
@@ -309,6 +373,17 @@ billingRouter.post('/edit/:id', async (req, res) => {
       session.endSession();
       return res.status(404).json({ message: 'Billing record not found.' });
     }
+
+    // Fetch the user performing the operation
+    const user = await User.findById(userId).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const isAdmin = user.isAdmin;
+    const isBillApproved = existingBilling.isApproved;
 
     // === 2. Prepare Product Data ===
 
@@ -340,16 +415,20 @@ billingRouter.post('/edit/:id', async (req, res) => {
     for (const product of productsToRemove) {
       const productInDB = productMap[product.item_id];
       if (productInDB) {
-        // Add back the quantity to stock
-        productInDB.countInStock += parseFloat(product.quantity);
-        await productInDB.save({ session });
-      }
+        // Add back the quantity to stock only if stock was already deducted
+        if (existingBilling.isApproved) {
+          productInDB.countInStock += parseFloat(product.quantity);
+          await productInDB.save({ session });
+        }
 
-      // Remove the product from billing
-      existingBilling.products.id(product._id).remove();
+        // Remove the product from billing
+        existingBilling.products.id(product._id).remove();
+      }
     }
 
     // === 3.2. Update Existing Products and Add New Products ===
+    const productUpdatePromises = [];
+
     for (const updatedProduct of products) {
       const {
         item_id,
@@ -390,28 +469,30 @@ billingRouter.post('/edit/:id', async (req, res) => {
         const previousQuantity = parseFloat(existingProductInBilling.quantity);
         const quantityDifference = newQuantity - previousQuantity;
 
-        // Calculate new stock count
-        const newStockCount = productInDB.countInStock - quantityDifference;
+        if (existingBilling.isApproved || isAdmin) {
+          // Calculate new stock count
+          const newStockCount = productInDB.countInStock - quantityDifference;
 
-        if (newStockCount < 0) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({
-            message: `Insufficient stock for product ID ${trimmedItemId}. Only ${
-              productInDB.countInStock + previousQuantity
-            } available.`,
-          });
+          if (newStockCount < 0) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              message: `Insufficient stock for product ID ${trimmedItemId}. Only ${
+                productInDB.countInStock + previousQuantity
+              } available.`,
+            });
+          }
+
+          // Update stock count
+          productInDB.countInStock = newStockCount;
+          productUpdatePromises.push(productInDB.save({ session }));
         }
-
-        // Update stock count
-        productInDB.countInStock = newStockCount;
-        await productInDB.save({ session });
 
         // Update product details in billing
         existingProductInBilling.quantity = newQuantity;
         existingProductInBilling.sellingPrice = parseFloat(sellingPrice) || 0;
         existingProductInBilling.enteredQty = parseFloat(enteredQty) || 0;
-        existingProductInBilling.sellingPriceinQty =  parseFloat(sellingPriceinQty) || 0;
+        existingProductInBilling.sellingPriceinQty = parseFloat(sellingPriceinQty) || 0;
         existingProductInBilling.unit = unit || existingProductInBilling.unit;
         existingProductInBilling.length = parseFloat(length) || 0;
         existingProductInBilling.breadth = parseFloat(breadth) || 0;
@@ -420,18 +501,20 @@ billingRouter.post('/edit/:id', async (req, res) => {
       } else {
         // New product to be added to billing
 
-        // Ensure sufficient stock
-        if (productInDB.countInStock < newQuantity) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({
-            message: `Insufficient stock for product ID ${trimmedItemId}. Only ${productInDB.countInStock} available.`,
-          });
-        }
+        if (existingBilling.isApproved || isAdmin) {
+          // Ensure sufficient stock
+          if (productInDB.countInStock < newQuantity) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              message: `Insufficient stock for product ID ${trimmedItemId}. Only ${productInDB.countInStock} available.`,
+            });
+          }
 
-        // Deduct stock
-        productInDB.countInStock -= newQuantity;
-        await productInDB.save({ session });
+          // Deduct stock
+          productInDB.countInStock -= newQuantity;
+          productUpdatePromises.push(productInDB.save({ session }));
+        }
 
         // Add new product to billing
         existingBilling.products.push({
@@ -456,50 +539,49 @@ billingRouter.post('/edit/:id', async (req, res) => {
 
     if (paymentAmount !== undefined || paymentMethod) {
       // Ensure both paymentAmount and paymentMethod are provided
-      if (!paymentAmount || !paymentMethod) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          message:
-            'Both paymentAmount and paymentMethod are required to process a payment.',
-        });
-      }
-
-      const parsedPaymentAmount = parseFloat(paymentAmount);
-
-      // Validate payment amount
-      if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({ message: 'Invalid payment amount.' });
-      }
-
-      // Calculate total paid so far
-      const totalPaid = existingBilling.payments.reduce(
-        (acc, payment) => acc + parseFloat(payment.amount),
-        0
-      );
-
-      // Ensure paymentAmount does not exceed totalAmount
-      if (totalPaid + parsedPaymentAmount > billingAmount) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          message:
+      if (parseFloat(paymentAmount) > 0 && paymentMethod) {
+        // await session.abortTransaction();
+        // session.endSession();
+        // return res.status(400).json({
+        //   message:
+        //     'Both paymentAmount and paymentMethod are required to process a payment.',
+        // });
+        
+        const parsedPaymentAmount = parseFloat(paymentAmount);
+        
+        // Validate payment amount
+        if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ message: 'Invalid payment amount.' });
+        }
+        
+        // Calculate total paid so far
+        const totalPaid = existingBilling.payments.reduce(
+          (acc, payment) => acc + parseFloat(payment.amount),
+          0
+        );
+        
+        // Ensure paymentAmount does not exceed totalAmount
+        if (totalPaid + parsedPaymentAmount > billingAmount - (discount ? parseFloat(discount) : 0)) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({
+            message:
             'Payment amount exceeds the total amount after discount.',
-        });
+          });
+        }
+        
+        const paymentEntry = {
+          amount: parsedPaymentAmount,
+          method: paymentMethod,
+          date: paymentReceivedDate ? new Date(paymentReceivedDate) : new Date(),
+        };
+        
+        // Add the payment to the payments array
+        existingBilling.payments.push(paymentEntry);
       }
-
-      const paymentEntry = {
-        amount: parsedPaymentAmount,
-        method: paymentMethod,
-        date: paymentReceivedDate ? new Date(paymentReceivedDate) : new Date(),
-      };
-
-      // Add the payment to the payments array
-      existingBilling.payments.push(paymentEntry);
     }
-
 
     // === 5. Update Billing Details ===
 
@@ -509,6 +591,10 @@ billingRouter.post('/edit/:id', async (req, res) => {
     existingBilling.expectedDeliveryDate = new Date(expectedDeliveryDate);
     existingBilling.billingAmount = parseFloat(billingAmount) || 0;
     existingBilling.discount = parseFloat(discount) || 0;
+    existingBilling.unloading = parseFloat(unloading) || 0;
+    existingBilling.transportation = parseFloat(transportation) || 0;
+    existingBilling.remark = remark;
+    existingBilling.handlingCharge = parseFloat(handlingcharge) || 0;
     existingBilling.customerName = customerName;
     existingBilling.customerAddress = customerAddress;
     existingBilling.customerContactNumber = customerContactNumber;
@@ -516,18 +602,25 @@ billingRouter.post('/edit/:id', async (req, res) => {
     existingBilling.paymentStatus = paymentStatus || existingBilling.paymentStatus;
     existingBilling.deliveryStatus = deliveryStatus || existingBilling.deliveryStatus;
 
-    // === 6. Save Updated Billing Record ===
+    // === 6. Update Stock if User is Admin or Bill is Approved ===
+    if (isAdmin || isBillApproved) {
+      await Promise.all(productUpdatePromises);
+    }
+
+    // === 7. Save Updated Billing Record ===
     await existingBilling.save({ session });
 
-    // === 7. Commit Transaction ===
+    // === 8. Commit Transaction ===
     await session.commitTransaction();
     session.endSession();
 
-    // === 8. Send Success Response ===
+    // === 9. Send Success Response ===
     res.status(200).json({ message: 'Billing data updated successfully.' });
   } catch (error) {
     // Abort transaction on error
-    await session.abortTransaction();
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
     session.endSession();
 
     console.error('Error updating billing data:', error);
@@ -537,6 +630,101 @@ billingRouter.post('/edit/:id', async (req, res) => {
       message: 'Error updating billing data.',
       error: error.message,
     });
+  }
+});
+
+// =========================
+// Route: Approve Billing Entry
+// =========================
+billingRouter.put('/bill/approve/:billId', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { billId } = req.params;
+    const { userId } = req.body; // Assuming the approving userId is sent in the body
+
+    // Fetch the user performing the approval
+    const approvingUser = await User.findById(userId).session(session);
+    if (!approvingUser) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ error: 'Approving user not found' });
+    }
+
+    if (!approvingUser.isAdmin) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({ error: 'Only admins can approve bills' });
+    }
+
+    // Find the existing bill
+    const existingBill = await Billing.findById(billId).session(session);
+    if (!existingBill) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ error: 'Bill not found' });
+    }
+
+    // Check if the bill is already approved
+    if (existingBill.isApproved) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ error: 'Bill is already approved' });
+    }
+
+    // Update bill status to 'approved'
+    existingBill.isApproved = true;
+    existingBill.approvedBy = userId;
+
+    // -----------------------
+    // 1. Update Stock During Approval
+    // -----------------------
+    const productUpdatePromises = [];
+    for (const item of existingBill.products) {
+      const { item_id, quantity } = item;
+
+      // Fetch product using item_id
+      const product = await Product.findOne({ item_id }).session(session);
+      if (!product) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({ message: `Product with ID ${item_id} not found` });
+      }
+
+      // Check if there is enough stock
+      if (product.countInStock < quantity) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: `Insufficient stock for product ID ${item_id}` });
+      }
+
+      // Deduct the stock
+      product.countInStock -= parseFloat(quantity);
+      productUpdatePromises.push(product.save({ session }));
+    }
+
+    // Save the updated bill
+    await existingBill.save({ session });
+
+    // Update all product stock counts
+    await Promise.all(productUpdatePromises);
+
+    // Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json({ message: 'Bill approved successfully', bill: existingBill });
+  } catch (error) {
+    console.error('Error approving bill:', error);
+
+    // Abort transaction on error
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
+
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
@@ -766,7 +954,7 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
 billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
   try {
     const { id } = req.params;
-    const { fuelCharge = 0, otherExpenses = [] } = req.body;
+    const { fuelCharge = 0, otherExpenses = [], paymentMethod, userId } = req.body;
 
     // Find the billing document by ID
     const billing = await Billing.findById(id);
@@ -793,6 +981,38 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
         amount: parseFloat(expense.amount),
         remark: expense.remark || ""
       })));
+    }
+  
+    try {
+      const account = await PaymentsAccount.findOne({ accountId: paymentMethod });
+    
+      if (!account) {
+        console.log(`No account found for accountId: ${paymentMethod}`);
+        return res.status(404).json({ message: 'Payment account not found' });
+      }
+    
+      account.paymentsOut.push(...validOtherExpenses.map(expense => ({
+        amount: parseFloat(expense.amount),
+        remark: expense.remark || "",
+        paymentMethod: paymentMethod,
+        userId: userId
+      })));
+
+      const parsedfuelCharge = parseFloat(fuelCharge)
+
+      if(parsedfuelCharge > 0){
+        account.paymentsOut.push({
+          amount: parsedfuelCharge,
+          remark: 'Fuel Charge',
+          method: paymentMethod,
+          submittedBy: userId
+        });
+      }
+    
+      await account.save();
+    } catch (error) {
+      console.error('Error processing payment:', error);
+      return res.status(500).json({ message: 'Error processing payment', error });
     }
 
     // Save the updated document
@@ -856,15 +1076,24 @@ billingRouter.get('/purchases/suggestions', async (req, res) => {
     // Find sellers whose names match the search term (case-insensitive)
     const sellers = await Purchase.find({
       sellerName: { $regex: searchTerm, $options: 'i' }
-    }).limit(10); // Limit to 10 suggestions for performance
+    })
+      .select('sellerName sellerAddress sellerGst sellerId') // Select only required fields
+      .limit(10); // Limit to 10 suggestions for performance
 
-    const suggestions = sellers.map(seller => seller.sellerName);
+    const suggestions = sellers.map(seller => ({
+      sellerName: seller.sellerName,
+      sellerAddress: seller.sellerAddress,
+      sellerGst: seller.sellerGst,
+      sellerId: seller.sellerId
+    }));
+
     res.json({ suggestions });
   } catch (error) {
     console.error('Error fetching seller suggestions:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 
 billingRouter.get('/purchases/categories', async (req, res) => {
   try {
@@ -877,29 +1106,6 @@ billingRouter.get('/purchases/categories', async (req, res) => {
   }
 });
 
-billingRouter.put('/bill/approve/:billId', async (req, res) => {
-  try {
-    const { billId } = req.params;
-
-    // Find the existing bill
-    const existingBill = await Billing.findById(billId);
-    if (!existingBill) {
-      return res.status(404).json({ error: 'Bill not found' });
-    }
-
-    // Update bill status to 'approved'
-    existingBill.isApproved = true;
-    existingBill.approvedBy = req.body.userId;
-
-    // Save the updated document
-    await existingBill.save();
-
-    res.json({ message: 'Bill approved successfully', bill: existingBill });
-  } catch (error) {
-    console.error('Error approving bill:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 
 billingRouter.get('/deliveries/all', async (req, res) => {
@@ -1051,6 +1257,74 @@ billingRouter.post('/bill/cancel', async (req, res) => {
     res.status(500).json({message: "error occured"})
   }
 });
+
+
+// =========================
+// Route: Get Customer Suggestions
+// =========================
+
+// Utility function to escape regex special characters
+
+billingRouter.get('/customer/suggestions', async (req, res) => {
+  const { search, suggestions } = req.query;
+  
+  // Validate query parameters
+  if (suggestions !== "true" || !search) {
+    return res.status(400).json({
+      message: "Invalid request. Please provide both 'search' and set 'suggestions' to 'true'."
+    });
+  }
+  
+  try {
+    const escapeRegex = (text) => text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+    // Sanitize and create a case-insensitive regex
+    const safeSearch = escapeRegex(search);
+    const regex = new RegExp(safeSearch, 'i');
+
+    // Fetch matching customers using aggregation for deduplication
+    const customers = await Billing.aggregate([
+      {
+        $match: {
+          $or: [
+            { customerName: { $regex: regex } },
+            { customerContactNumber: { $regex: regex } }
+          ]
+        }
+      },
+      {
+        $group: {
+          _id: {
+            customerName: "$customerName",
+            customerContactNumber: "$customerContactNumber",
+            customerAddress: "$customerAddress"
+          },
+          doc: { $first: "$$ROOT" }
+        }
+      },
+      {
+        $replaceRoot: { newRoot: "$doc" }
+      },
+      {
+        $project: {
+          _id: 1,
+          customerName: 1,
+          customerContactNumber: 1,
+          customerAddress: 1
+        }
+      },
+      {
+        $limit: 4
+      }
+    ]);
+
+    res.json({ suggestions: customers });
+  } catch (error) {
+    console.error('Error fetching customer suggestions:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
 
 
 

@@ -1,5 +1,6 @@
 import express from 'express';
 import Purchase from '../models/purchasemodals.js';
+import Transportation from '../models/transportModal.js';
 
 
 
@@ -14,47 +15,6 @@ purchaseRouter.get('/get/:id', async (req, res) => {
       res.status(404);
       throw new Error("Purchase not found");
     }
-});
-
-
-purchaseRouter.get('/purchases/payments', async (req, res) => {
-  const { date } = req.query;
-
-  if (!date) {
-    res.status(400);
-    throw new Error('Date parameter is required');
-  }
-
-  const start = new Date(date);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(date);
-  end.setHours(23, 59, 59, 999);
-
-  const purchases = await Purchase.find({
-    'payments.date': { $gte: start, $lte: end },
-  });
-
-  const payments = [];
-
-  purchases.forEach((purchase) => {
-    purchase.payments.forEach((payment) => {
-      const paymentDate = new Date(payment.date);
-      if (paymentDate >= start && paymentDate <= end) {
-        payments.push({
-          _id: payment._id,
-          purchaseId: purchase._id,
-          sellerName: purchase.sellerName,
-          invoiceNo: purchase.invoiceNo,
-          amount: payment.amount,
-          method: payment.method,
-          remark: payment.remark,
-          date: payment.date,
-        });
-      }
-    });
-  });
-
-  res.json(payments);
 });
 
 
@@ -112,7 +72,37 @@ purchaseRouter.get('/payments/suggesstion', async (req, res) => {
       // Handle other GET requests if needed
       res.status(400).json({ message: "Invalid request" });
     }
-})
+});
+
+
+purchaseRouter.get('/get-all/transportCompany', async (req, res) => {
+  const transportCompanies = await Transportation.distinct('transportCompanyName');
+  res.json(transportCompanies);
+});
+
+
+
+purchaseRouter.get('/lastOrder/id', async (req, res) => {
+  try {
+    // Fetch the invoice with the highest sequence number starting with 'K'
+    const billing = await Purchase.findOne({ purchaseId: /^KP\d+$/ })
+      .sort({ purchaseId: -1 })
+      .collation({ locale: "en", numericOrdering: true });
+
+    // Check if an invoice was found
+    if (billing) {
+      res.json(billing.purchaseId);
+    } else {
+      const billing = await Purchase.find()
+      .sort({ purchaseId: -1 })
+      .collation({ locale: "en", numericOrdering: true });
+    const newId = "KP1"
+      res.json(newId);
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching last order' });
+  }
+});
 
 
 
