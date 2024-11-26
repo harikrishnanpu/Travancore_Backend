@@ -158,7 +158,7 @@ printRouter.post('/generate-pdf', async (req, res) => {
         <!-- Footer Section -->
                 <footer>Page ${pageNumber} of ${totalPages}</footer>
         <footer>
-            <p>Thank you for your business! After 30 days of delivery no products will not be replaced.</p>
+            <p>Thank you for your business! 45 ദിവസത്തിന് ശേഷം ഉൽപ്പന്നങ്ങൾ മാറ്റിസ്ഥാപിക്കാനോ തിരികെ നൽകാനോ കഴിയില്ല. 30 ദിവസത്തിനുള്ളിൽ പകരം വയ്ക്കുന്നവർക്ക് മാത്രം ജിഎസ്ടി ഉൾപ്പെടെയുള്ള റീഫണ്ടുകൾ.</p>
         </footer>
     </div>
   `;
@@ -490,7 +490,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
           <!-- Footer Section -->
                   <footer>Page ${pageNumber} of ${totalPages}</footer>
           <footer>
-              <p>Thank you for your business! After 30 days of delivery no products will not be replaced.</p>
+              <p>Thank you for your business! 45 ദിവസത്തിന് ശേഷം ഉൽപ്പന്നങ്ങൾ മാറ്റിസ്ഥാപിക്കാനോ തിരികെ നൽകാനോ കഴിയില്ല. 30 ദിവസത്തിനുള്ളിൽ പകരം വയ്ക്കുന്നവർക്ക് മാത്രം ജിഎസ്ടി ഉൾപ്പെടെയുള്ള റീഫണ്ടുകൾ.</p>
           </footer>
       </div>
     `;
@@ -784,10 +784,9 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
               <th>Purchased Unit</th>
               <th>P.Unit</th>
               <th>S.Unit</th>
-              <th>Bill Part Price</th>
-              <th>Cash Part Price</th>
-              <th>Allocated Other Expense</th>
-              <th>Total Amount</th>
+              <th>Total</th>
+              <th>Other Expense</th>
+              <th>Grand Total</th>
             </tr>
           </thead>
           <tbody>
@@ -803,17 +802,22 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
                   <td>${safeGet(product.brand) || 'N/A'}</td>
                   <td>${safeGet(product.category) || 'N/A'}</td>
                   <td>${safeGet(product.quantity)}</td>
+                  <td>${safeGet(product.pUnit) || 'N/A'}</td>
                   <td>${safeGet(product.quantityInNumbers)}</td>
                   <td>${safeGet(product.pUnit) || 'N/A'}</td>
-                  <td>${safeGet(product.pUnit) || 'N/A'}</td>
                   <td>${safeGet(product.sUnit) || 'N/A'}</td>
-                  <td>₹${parseFloat(product.billPartPrice).toFixed(2)}</td>
-                  <td>₹${parseFloat(product.cashPartPrice).toFixed(2)}</td>
+                  <td>₹${(parseFloat(product.billPartPrice) + parseFloat(product.cashPartPrice) ).toFixed(2)}</td>
                   <td>₹${parseFloat(product.allocatedOtherExpense).toFixed(2)}</td>
-                  <td>₹${(
+                  <td>₹${
+                  
+                  ((
                     product.quantity *
                     (parseFloat(product.billPartPrice) + parseFloat(product.cashPartPrice))
-                  ).toFixed(2)}</td>
+                  ) + parseFloat(
+                   product.allocatedOtherExpense * product.quantity
+                    ) )
+                    
+                  .toFixed(2)}</td>
                 </tr>`
                     )
                     .join('')
@@ -828,11 +832,10 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
             ? `
         <div class="totals">
           <div style="font-size: 12px;">
-            <p>Subtotal: ₹${parseFloat(totals.subTotal || 0).toFixed(2)}</p>
-            <p>Discount: ₹${parseFloat(totals.discount || 0).toFixed(2)}</p>
-            <p>CGST (9%): ₹${parseFloat(totals.cgst || 0).toFixed(2)}</p>
-            <p>SGST (9%): ₹${parseFloat(totals.sgst || 0).toFixed(2)}</p>
-            <p>Total Amount: ₹${parseFloat(totals.billingAmount || 0).toFixed(2)}</p>
+            <p>SubTotal: ₹${parseFloat(totals.amountWithoutGSTItems || 0).toFixed(2)}</p>
+            <p>CGST items: ₹${parseFloat(totals.cgstItems || 0).toFixed(2)}</p>
+            <p>SGST items: ₹${parseFloat(totals.sgstItems || 0).toFixed(2)}</p>
+            <p>Total Purchase Amount: ₹${parseFloat(totals.totalPurchaseAmount || 0).toFixed(2)}</p>
             <p>Transportation Charges: ₹${parseFloat(totals.transportationCharges || 0).toFixed(2)}</p>
             <p>Unloading Charges: ₹${parseFloat(totals.unloadingCharge || 0).toFixed(2)}</p>
             <p>Insurance: ₹${parseFloat(totals.insurance || 0).toFixed(2)}</p>

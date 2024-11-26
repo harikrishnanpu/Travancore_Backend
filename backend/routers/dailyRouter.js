@@ -230,9 +230,9 @@ transactionRouter.post('/trans/transfer', async (req, res) => {
     }
 
     // Check if the `fromAccount` has sufficient balance
-    if (fromAccount.balanceAmount < parsedPaymentAmount) {
-      return res.status(400).send({ message: 'Insufficient funds in the source account' });
-    }
+    // if (fromAccount.balanceAmount < parsedPaymentAmount) {
+    //   return res.status(400).send({ message: 'Insufficient funds in the source account' });
+    // }
 
     // Create 'out' transaction
     const outTransaction = new DailyTransaction({
