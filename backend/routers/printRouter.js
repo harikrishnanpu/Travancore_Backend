@@ -2,6 +2,7 @@ import express from 'express';
 import QRCode from 'qrcode';
 import QrCodeDB from '../models/qrcodeVerificstionModal.js';
 import { chromium } from 'playwright';
+import Return from '../models/returnModal.js';
 
 const printRouter = express.Router();
 
@@ -999,46 +1000,260 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
 
 printRouter.post('/verify-qr-code', async (req, res) => {
   try {
-    const { qrcodeId } = req.body; // Directly destructure qrcodeId from req.body
+    const { qrcodeId } = req.body;
 
     if (!qrcodeId) {
       return res.status(400).json({ verified: false, message: 'qrcodeId is required' });
     }
 
     // Find the QR code in the database
-    const qrCodeEntry = await QrCodeDB.findOne({ qrcodeId });
+    const qrCodeEntry = await QrCodeDB.findOne({ qrcodeId: qrcodeId });
 
-    if (!qrCodeEntry) {
-      return res.status(404).json({ verified: false, message: 'QR Code not found' });
-    }
-
-    if (qrCodeEntry.verified) {
-
+    if (qrCodeEntry) {
+      // QR code is found; it's our company's bill
       return res.status(200).json({
         verified: true,
-        message: 'QR Code already verified',
+        message: 'This is our company\'s bill.',
         billId: qrCodeEntry.billId,
-        purchase,
+      });
+    } else {
+      // QR code not found; it's not our company's bill
+      return res.status(404).json({
+        verified: false,
+        message: 'This is not our company\'s bill.',
       });
     }
-
-    // Mark as verified
-    qrCodeEntry.verified = true;
-    qrCodeEntry.verifiedAt = new Date();
-    await qrCodeEntry.save();
-
-    return res.status(200).json({
-      verified: true,
-      message: 'QR Code verified successfully',
-      billId: qrCodeEntry.billId,
-      purchase,
-    });
   } catch (error) {
     console.error('Error verifying QR Code:', error);
     res.status(500).json({ verified: false, message: 'Internal Server Error' });
   }
 });
 
+
+
+
+
+printRouter.post('/generate-return-invoice-html', async (req, res) => {
+  try {
+    const { returnNo } = req.body;
+
+    // Validate required field
+    if (!returnNo) {
+      return res.status(400).json({ error: 'returnNo is required' });
+    }
+
+    // Fetch the return data from the database
+    const returnData = await Return.findOne({ returnNo });
+
+    if (!returnData) {
+      return res.status(404).json({ error: 'Return data not found' });
+    }
+
+    // Generate QR Code as Data URL
+    const NewQrCodeId = `${returnNo}-${Date.now()}`;
+
+    if (NewQrCodeId) {
+      const qrcodeDb = new QrCodeDB({
+        qrcodeId: NewQrCodeId,
+        billId: returnNo,
+      });
+
+      await qrcodeDb.save();
+    }
+
+    const qrCodeDataURL = await QRCode.toDataURL(NewQrCodeId);
+
+    // Generate the HTML content
+    const htmlContent = generateReturnInvoiceHTML(returnData, qrCodeDataURL);
+
+    // Send the HTML as a response
+    res.setHeader('Content-Type', 'text/html');
+    res.send(htmlContent);
+  } catch (error) {
+    console.error('Error generating return invoice:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// Function to generate the return invoice HTML
+function generateReturnInvoiceHTML(returnData, qrCodeDataURL) {
+  const returnNo = safeGet(returnData.returnNo);
+  const billingNo = safeGet(returnData.billingNo);
+  const returnDate = safeGet(returnData.returnDate);
+  const customerName = safeGet(returnData.customerName);
+  const customerAddress = safeGet(returnData.customerAddress);
+  const products = Array.isArray(returnData.products) ? returnData.products : [];
+  const returnAmount = parseFloat(safeGet(returnData.returnAmount, 0));
+  const totalTax = parseFloat(safeGet(returnData.totalTax, 0));
+  const netReturnAmount = parseFloat(safeGet(returnData.netReturnAmount, 0));
+
+  return `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KK Trading - Return Invoice</title>
+    <style>
+      /* CSS styles */
+      body {
+        font-family: Arial, sans-serif;
+      }
+      .invoice {
+        max-width: 800px;
+        margin: auto;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 10px;
+      }
+      .header {
+        text-align: center;
+        background-color: #960101; /* Dark Red */
+        color: #fff;
+        padding: 20px;
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+      }
+      .header h1 {
+        margin-bottom: 5px;
+      }
+      .invoice-info, .customer-info {
+        margin-top: 20px;
+      }
+      .invoice-info div, .customer-info div {
+        margin-bottom: 5px;
+      }
+      .qr-code {
+        text-align: right;
+        margin-top: -100px;
+      }
+      .products-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+      }
+      .products-table th, .products-table td {
+        border: 1px solid #ddd;
+        padding: 8px;
+      }
+      .products-table th {
+        background-color: #f4cccc; /* Light Red */
+        color: #960101; /* Dark Red */
+      }
+      .totals {
+        margin-top: 20px;
+        text-align: right;
+        font-size: 16px;
+      }
+      .totals p {
+        margin: 5px 0;
+      }
+      footer {
+        text-align: center;
+        margin-top: 20px;
+        font-size: 12px;
+        color: #777;
+      }
+@media print {
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+        text-align: center; /* Ensure all text is centered */
+    }
+
+    .invoice {
+        margin: 0 auto; /* Center the invoice horizontally */
+        width: 100%; /* Adjust width as needed */
+        max-width: 800px; /* Set a maximum width for the printed content */
+        padding: 20px;
+        border: none; /* Remove any borders to look clean */
+        box-shadow: none; /* Remove shadows */
+        page-break-inside: avoid; /* Avoid page breaks inside the invoice */
+    }
+
+    .header, .footer {
+        text-align: center;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: auto; /* Center the table */
+    }
+
+    th, td {
+        padding: 8px;
+        border: 1px solid #ddd;
+    }
+}
+
+    </style>
+    <script>
+      window.onload = function() {
+        window.print();
+      };
+    </script>
+  </head>
+  <body>
+    <div class="invoice">
+      <div class="header">
+        <h1>KK TRADING</h1>
+        <p>Tiles, Granites, Sanitary Wares, UV Sheets</p>
+      </div>
+      <div class="qr-code">
+        <img src="${qrCodeDataURL}" alt="QR Code" width="100" height="100" />
+      </div>
+      <div class="invoice-info">
+        <div><strong>Return Invoice No:</strong> ${returnNo}</div>
+        <div><strong>Billing No:</strong> ${billingNo}</div>
+        <div><strong>Return Date:</strong> ${new Date(returnDate).toLocaleDateString()}</div>
+      </div>
+      <div class="customer-info">
+        <div><strong>Customer Name:</strong> ${customerName}</div>
+        <div><strong>Customer Address:</strong> ${customerAddress}</div>
+      </div>
+      <table class="products-table">
+        <thead>
+          <tr>
+            <th>Sl</th>
+            <th>Item ID</th>
+            <th>Name</th>
+            <th>Quantity</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            products.length > 0
+              ? products
+                  .map(
+                    (product, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td>${safeGet(product.item_id)}</td>
+                <td>${safeGet(product.name)}</td>
+                <td>${safeGet(product.quantity)}</td>
+              </tr>
+            `
+                  )
+                  .join('')
+              : '<tr><td colspan="4">No products returned.</td></tr>'
+          }
+        </tbody>
+      </table>
+      <div class="totals">
+        <p><strong>Return Amount:</strong> ₹${returnAmount.toFixed(2)}</p>
+        <p><strong>Total Tax:</strong> ₹${totalTax.toFixed(2)}</p>
+        <p><strong>Net Return Amount:</strong> ₹${netReturnAmount.toFixed(2)}</p>
+      </div>
+      <footer>
+        <p>Thank you for your business!</p>
+      </footer>
+    </div>
+  </body>
+  </html>
+  `;
+}
 
 
 
