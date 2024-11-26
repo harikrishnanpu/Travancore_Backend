@@ -26,6 +26,7 @@ const productSchema = new mongoose.Schema(
     breadth: {type: String},
     size: {type: String},
     unit: {type: String},
+    price: {type: String},
     billPartPrice: {type: Number},
     cashPartPrice: {type: Number},
     sellerAddress: { type: String},

@@ -176,19 +176,19 @@ sellerPaymentsRouter.get('/daily/payments', async (req, res) => {
   try {
     const { date } = req.query;
 
-    // Validate if date is provided
     if (!date) {
       return res.status(400).json({ message: 'Date is required' });
     }
 
-    // Parse the date and define the start and end of the day in UTC
     const selectedDate = new Date(date);
-    selectedDate.setUTCHours(0, 0, 0, 0);
+    if (isNaN(selectedDate)) {
+      return res.status(400).json({ message: 'Invalid date format' });
+    }
 
+    selectedDate.setUTCHours(0, 0, 0, 0);
     const nextDate = new Date(selectedDate);
     nextDate.setUTCDate(nextDate.getUTCDate() + 1);
 
-    // Use aggregation to unwind payments and filter by date
     const sellers = await SellerPayment.aggregate([
       { $unwind: '$payments' },
       {
@@ -211,6 +211,9 @@ sellerPaymentsRouter.get('/daily/payments', async (req, res) => {
     res.status(500).json({ message: 'Error fetching seller payments' });
   }
 });
+
+
+
 
 
 

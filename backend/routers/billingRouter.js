@@ -411,177 +411,184 @@ billingRouter.post('/edit/:id', async (req, res) => {
       (p) => !updatedProductIds.includes(p.item_id)
     );
 
-    // === 3.1. Remove Products Not Present in Updated List ===
-    for (const product of productsToRemove) {
-      const productInDB = productMap[product.item_id];
-      if (productInDB) {
-        // Add back the quantity to stock only if stock was already deducted
-        if (existingBilling.isApproved) {
-          productInDB.countInStock += parseFloat(product.quantity);
-          await productInDB.save({ session });
-        }
 
-        // Remove the product from billing
-        existingBilling.products.id(product._id).remove();
-      }
+// === 3.1. Remove Products Not Present in Updated List ===
+for (const product of productsToRemove) {
+  const productInDB = productMap[product.item_id];
+  if (productInDB) {
+    // Add back the quantity to stock only if stock was already deducted
+    if (isBillApproved) {
+      productInDB.countInStock += parseFloat(product.quantity);
+      await productInDB.save({ session });
     }
+
+    // Remove the product from billing
+    existingBilling.products.id(product._id).remove();
+  }
+}
+
+
 
     // === 3.2. Update Existing Products and Add New Products ===
-    const productUpdatePromises = [];
+const productUpdatePromises = [];
 
-    for (const updatedProduct of products) {
-      const {
-        item_id,
-        name,
-        category,
-        brand,
-        quantity,
-        sellingPrice,
-        enteredQty,
-        sellingPriceinQty,
-        unit,
-        length,
-        breadth,
-        psRatio,
-        size
-      } = updatedProduct;
+for (const updatedProduct of products) {
+  const {
+    item_id,
+    name,
+    category,
+    brand,
+    quantity,
+    sellingPrice,
+    enteredQty,
+    sellingPriceinQty,
+    unit,
+    length,
+    breadth,
+    psRatio,
+    size
+  } = updatedProduct;
 
-      const trimmedItemId = item_id.trim();
-      const newQuantity = parseFloat(quantity);
+  const trimmedItemId = item_id.trim();
+  const newQuantity = parseFloat(quantity);
 
-      // Validate product exists in the database
-      const productInDB = productMap[trimmedItemId];
-      if (!productInDB) {
+  // Validate product exists in the database
+  const productInDB = productMap[trimmedItemId];
+  if (!productInDB) {
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(404).json({
+      message: `Product with ID ${trimmedItemId} not found.`,
+    });
+  }
+
+  // Find the product in the existing billing
+  const existingProductInBilling = existingBilling.products.find(
+    (p) => p.item_id === trimmedItemId
+  );
+
+  if (existingProductInBilling) {
+    // Calculate quantity difference
+    const previousQuantity = parseFloat(existingProductInBilling.quantity);
+    const quantityDifference = newQuantity - previousQuantity;
+
+    if (isBillApproved || isAdmin) {
+      // Calculate new stock count
+      const newStockCount = productInDB.countInStock - quantityDifference;
+
+      if (newStockCount < 0) {
         await session.abortTransaction();
         session.endSession();
-        return res.status(404).json({
-          message: `Product with ID ${trimmedItemId} not found.`,
+        return res.status(400).json({
+          message: `Insufficient stock for product ID ${trimmedItemId}. Only ${
+            productInDB.countInStock + previousQuantity
+          } available.`,
         });
       }
 
-      // Find the product in the existing billing
-      const existingProductInBilling = existingBilling.products.find(
-        (p) => p.item_id === trimmedItemId
-      );
-
-      if (existingProductInBilling) {
-        // Calculate quantity difference
-        const previousQuantity = parseFloat(existingProductInBilling.quantity);
-        const quantityDifference = newQuantity - previousQuantity;
-
-        if (existingBilling.isApproved || isAdmin) {
-          // Calculate new stock count
-          const newStockCount = productInDB.countInStock - quantityDifference;
-
-          if (newStockCount < 0) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(400).json({
-              message: `Insufficient stock for product ID ${trimmedItemId}. Only ${
-                productInDB.countInStock + previousQuantity
-              } available.`,
-            });
-          }
-
-          // Update stock count
-          productInDB.countInStock = newStockCount;
-          productUpdatePromises.push(productInDB.save({ session }));
-        }
-
-        // Update product details in billing
-        existingProductInBilling.quantity = newQuantity;
-        existingProductInBilling.sellingPrice = parseFloat(sellingPrice) || 0;
-        existingProductInBilling.enteredQty = parseFloat(enteredQty) || 0;
-        existingProductInBilling.sellingPriceinQty = parseFloat(sellingPriceinQty) || 0;
-        existingProductInBilling.unit = unit || existingProductInBilling.unit;
-        existingProductInBilling.length = parseFloat(length) || 0;
-        existingProductInBilling.breadth = parseFloat(breadth) || 0;
-        existingProductInBilling.psRatio = parseFloat(psRatio) || 0;
-        existingProductInBilling.size = size || productInDB.size;
-      } else {
-        // New product to be added to billing
-
-        if (existingBilling.isApproved || isAdmin) {
-          // Ensure sufficient stock
-          if (productInDB.countInStock < newQuantity) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(400).json({
-              message: `Insufficient stock for product ID ${trimmedItemId}. Only ${productInDB.countInStock} available.`,
-            });
-          }
-
-          // Deduct stock
-          productInDB.countInStock -= newQuantity;
-          productUpdatePromises.push(productInDB.save({ session }));
-        }
-
-        // Add new product to billing
-        existingBilling.products.push({
-          item_id: trimmedItemId,
-          name: name || productInDB.name,
-          sellingPrice: parseFloat(sellingPrice) || 0,
-          quantity: newQuantity,
-          category: category || productInDB.category,
-          brand: brand || productInDB.brand,
-          unit: unit || productInDB.unit,
-          sellingPriceinQty: parseFloat(sellingPriceinQty) || 0,
-          enteredQty: parseFloat(enteredQty) || 0,
-          length: parseFloat(length) || 0,
-          breadth: parseFloat(breadth) || 0,
-          psRatio: parseFloat(psRatio) || 0,
-          size: productInDB.size || size,
-        });
-      }
+      // Update stock count
+      productInDB.countInStock = newStockCount;
+      productUpdatePromises.push(productInDB.save({ session }));
     }
+
+    // Update product details in billing
+    existingProductInBilling.quantity = newQuantity;
+    existingProductInBilling.sellingPrice = parseFloat(sellingPrice) || 0;
+    existingProductInBilling.enteredQty = parseFloat(enteredQty) || 0;
+    existingProductInBilling.sellingPriceinQty = parseFloat(sellingPriceinQty) || 0;
+    existingProductInBilling.unit = unit || existingProductInBilling.unit;
+    existingProductInBilling.length = parseFloat(length) || 0;
+    existingProductInBilling.breadth = parseFloat(breadth) || 0;
+    existingProductInBilling.psRatio = parseFloat(psRatio) || 0;
+    existingProductInBilling.size = size || productInDB.size;
+  } else {
+    // New product to be added to billing
+    if (isBillApproved || isAdmin) {
+      // Ensure sufficient stock
+      if (productInDB.countInStock < newQuantity) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          message: `Insufficient stock for product ID ${trimmedItemId}. Only ${productInDB.countInStock} available.`,
+        });
+      }
+
+      // Deduct stock
+      productInDB.countInStock -= newQuantity;
+      productUpdatePromises.push(productInDB.save({ session }));
+    }
+
+    // Add new product to billing
+    existingBilling.products.push({
+      item_id: trimmedItemId,
+      name: name || productInDB.name,
+      sellingPrice: parseFloat(sellingPrice) || 0,
+      quantity: newQuantity,
+      category: category || productInDB.category,
+      brand: brand || productInDB.brand,
+      unit: unit || productInDB.unit,
+      sellingPriceinQty: parseFloat(sellingPriceinQty) || 0,
+      enteredQty: parseFloat(enteredQty) || 0,
+      length: parseFloat(length) || 0,
+      breadth: parseFloat(breadth) || 0,
+      psRatio: parseFloat(psRatio) || 0,
+      size: productInDB.size || size,
+    });
+  }
+}
+
 
     // === 4. Handle Payments ===
 
-    if (paymentAmount !== undefined || paymentMethod) {
-      // Ensure both paymentAmount and paymentMethod are provided
-      if (parseFloat(paymentAmount) > 0 && paymentMethod) {
-        // await session.abortTransaction();
-        // session.endSession();
-        // return res.status(400).json({
-        //   message:
-        //     'Both paymentAmount and paymentMethod are required to process a payment.',
-        // });
-        
-        const parsedPaymentAmount = parseFloat(paymentAmount);
-        
-        // Validate payment amount
-        if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({ message: 'Invalid payment amount.' });
-        }
-        
-        // Calculate total paid so far
-        const totalPaid = existingBilling.payments.reduce(
-          (acc, payment) => acc + parseFloat(payment.amount),
-          0
-        );
-        
-        // Ensure paymentAmount does not exceed totalAmount
-        if (totalPaid + parsedPaymentAmount > billingAmount - (discount ? parseFloat(discount) : 0)) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({
-            message:
-            'Payment amount exceeds the total amount after discount.',
-          });
-        }
-        
-        const paymentEntry = {
-          amount: parsedPaymentAmount,
-          method: paymentMethod,
-          date: paymentReceivedDate ? new Date(paymentReceivedDate) : new Date(),
-        };
-        
-        // Add the payment to the payments array
-        existingBilling.payments.push(paymentEntry);
-      }
-    }
+// === 4. Handle Payments ===
+if (paymentAmount && paymentMethod) {
+  const parsedPaymentAmount = parseFloat(paymentAmount);
+
+  // Validate payment amount
+  if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(400).json({ message: 'Invalid payment amount' });
+  }
+
+  // Ensure paymentAmount does not exceed totalAmount
+  const totalAmount = parseFloat(billingAmount) - parseFloat(discount || 0);
+  if (parsedPaymentAmount > totalAmount) {
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(400).json({
+      message: 'Payment amount cannot exceed total amount after discount',
+    });
+  }
+
+  const currentDate = new Date(paymentReceivedDate || Date.now());
+
+  const paymentEntry = {
+    amount: parsedPaymentAmount,
+    method: paymentMethod,
+    date: currentDate,
+  };
+
+  const accountPaymentEntry = {
+    amount: parsedPaymentAmount,
+    method: paymentMethod,
+    remark: `Bill ${invoiceNo}`,
+    submittedBy: userId,
+  };
+
+  const account = await PaymentsAccount.findOne({ accountId: paymentMethod }).session(session);
+  if (!account) {
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(404).json({ message: 'Payment account not found' });
+  }
+
+  account.paymentsIn.push(accountPaymentEntry);
+  await account.save({ session });
+
+  // Add the payment to the billing payments array
+  existingBilling.payments.push(paymentEntry);
+}
 
     // === 5. Update Billing Details ===
 

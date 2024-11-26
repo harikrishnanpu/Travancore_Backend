@@ -71,12 +71,6 @@ returnRouter.post('/create', async (req, res) => {
       }
 
       // Assuming 'deliveredQuantity' is the field that tracks delivered amount
-      const availableForReturn = billingProduct.deliveredQuantity - (billingProduct.returnedQuantity || 0);
-      if (product.quantity > availableForReturn) {
-        throw new Error(
-          `Returned quantity for ${product.name} exceeds available quantity. Available for return: ${availableForReturn}`
-        );
-      }
     }
 
     // Filter out products with quantity 0

@@ -33,11 +33,72 @@ transactionRouter.get('/transactions', async (req, res) => {
 // POST /api/daily/transactions
 transactionRouter.post('/transactions', async (req, res) => {
   try {
+    const {
+      date,
+      amount,
+      paymentFrom,
+      paymentTo,
+      category,
+      method, // This is the accountId
+      remark,
+      billId,
+      purchaseId,
+      transportId,
+      userId,
+      type, // 'in' or 'out'
+    } = req.body;
+
+    // Create a new DailyTransaction object
     const newTransaction = new DailyTransaction({
-      ...req.body,
-      user: req.body.userId,
+      date,
+      amount,
+      paymentFrom,
+      paymentTo,
+      category,
+      method,
+      remark,
+      billId,
+      purchaseId,
+      transportId,
+      user: userId,
+      type,
     });
+
+    // Find the account by method (method is accountId)
+    const myAccount = await PaymentsAccount.findOne({ accountId: method });
+
+    if (!myAccount) {
+      return res.status(404).json({ message: 'Payment account not found' });
+    }
+
+    if (type === 'in') {
+      // Payment In
+      const accountPaymentEntry = {
+        amount: amount,
+        method: method,
+        remark: `Payment from ${paymentFrom}`,
+        submittedBy: userId,
+      };
+      myAccount.paymentsIn.push(accountPaymentEntry);
+    } else if (type === 'out') {
+      // Payment Out
+      const accountPaymentEntry = {
+        amount: amount,
+        method: method,
+        remark: `Payment to ${paymentTo}`,
+        submittedBy: userId,
+      };
+      myAccount.paymentsOut.push(accountPaymentEntry);
+    } else {
+      return res.status(400).json({ message: 'Invalid transaction type' });
+    }
+
+    // Save the updated account
+    await myAccount.save();
+
+    // Save the transaction
     const savedTransaction = await newTransaction.save();
+
     res.status(201).json(savedTransaction);
   } catch (error) {
     console.error('Error creating transaction:', error);
@@ -96,6 +157,46 @@ transactionRouter.get('/billing', async (req, res) => {
     res.status(500).json({ message: 'Server Error' });
   }
 });
+
+
+transactionRouter.get('/allbill/payments', async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    if (!date) {
+      return res.status(400).json({ message: 'Date is required' });
+    }
+
+    const start = new Date(date);
+    if (isNaN(start)) {
+      return res.status(400).json({ message: 'Invalid date format' });
+    }
+
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    // Fetch billings, including payments and otherExpenses
+    const billings = await Billing.find({
+      invoiceDate: { $gte: start, $lt: end },
+      user: req.body.userId, // Ensure this is passed in the request body
+    }).populate('products') // If products are references
+      .populate('deliveries') // If deliveries are references
+      .lean(); // Use `lean()` for better performance if you don't need Mongoose document methods
+
+    // Format the response to include payments and other expenses explicitly
+    const formattedBillings = billings.map(billing => ({
+      ...billing,
+      payments: billing.payments || [],
+      otherExpenses: billing.otherExpenses || [],
+    }));
+
+    res.json(formattedBillings);
+  } catch (error) {
+    console.error('Error fetching billings:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
 
 
 transactionRouter.post('/trans/transfer', async (req, res) => {

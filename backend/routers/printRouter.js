@@ -658,192 +658,222 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
 
 
 
-  
-  // Route to generate Return Invoice HTML
-  printRouter.post('/generate-return-invoice-html', async (req, res) => {
-    try {
-      // Destructure necessary fields from the request body
-      let {
-        returnNo,
-        billingNo,
-        returnDate,
-        customerName,
-        customerAddress,
-        discount,
-        products,
-        returnAmount,
-        cgst,
-        sgst,
-        totalTax,
-        netReturnAmount
-      } = req.body;
-  
-      // Validate required fields
-      if (!returnNo || !billingNo || !customerName || !customerAddress || !returnDate) {
-        console.log(req.body)
-        return res.status(400).json({ error: 'Missing required fields.' });
-      }
-  
-      // Safely handle products array
-      const productList = Array.isArray(products) ? products : [];
-      const totalProducts = productList.length;
-      returnAmount = parseFloat(returnAmount) || 0;
-      discount = parseFloat(discount) || 0;
-      cgst = parseFloat(cgst) || 0;
-      sgst = parseFloat(sgst) || 0;
-      totalTax = parseFloat(totalTax) || 0;
-      netReturnAmount = parseFloat(netReturnAmount) || 0;
-  
-      const productsPerPage = 15;
-  
-      // Generate a unique QR Code ID
-      const NewQrCodeId = `${returnNo}-${Date.now()}`;
-  
-      if (NewQrCodeId) {
-        const qrCodeEntry = new QrCodeDB({
-          qrcodeId: NewQrCodeId,
-          billId: returnNo,
-        });
-  
-        await qrCodeEntry.save();
-      }
-  
-      // Generate QR Code as Data URL
-      const qrCodeDataURL = await QRCode.toDataURL(NewQrCodeId);
-  
-      // Function to generate return invoice page HTML
-      const generatePageHTML = (
-        productsChunk,
-        pageNumber,
-        totalPages,
-        showTotals
-      ) => `
-        <div class="invoice">
-          <!-- Header Section -->
-          <div class="header">
-            <p style="font-weight: 900;">KK TRADING</p>
-            <p style="font-size: 12px;margin-top: 10px;font-weight: 900;">Tiles, Granites, Sanitary Wares, UV Sheets</p>
-          </div>
-  
-          <!-- Invoice Information -->
-          <div class="invoice-info">
-            <div>
-              <p style="font-size: 12px;font-weight: bolder;">Return No: <strong>${returnNo}</strong></p>
-              <p>Billing No: <strong>${billingNo}</strong></p>
-              <p>Return Date: <strong>${new Date(returnDate).toLocaleDateString()}</strong></p>
-              <p>Discount: <strong>₹${discount}</strong></p>
-            </div>
-            <!-- QR Code Section -->
-            <div class="qr-code-section" style="text-align: right;">
-              <img src="${qrCodeDataURL}" alt="QR Code for Return Invoice" style="width: 50px; height: 50px;" />
-            </div>
-            <div>
-              <p><strong>From:</strong></p>
-              <p style="font-weight: bold;">KK TRADING</p>
-              <p style="font-size: 10px;">Moncompu, Chambakulam Road</p>
-              <p style="font-size: 10px;">Alappuzha, 688503</p>
-              <p style="font-size: 10px;">Contact: 0477 2080282</p>
-              <p style="font-size: 10px;">tradeinkk@gmail.com</p>
-            </div>
-          </div>
-  
-          <div class="invoice-info">
-            <div style="font-size: 10px;">
-              <p><strong>Return To:</strong></p>
-              <p style="font-weight: bold;">${customerName}</p>
-              <p>${customerAddress}</p>
-              <p>State: Kerala</p>
-            </div>
-  
-            <div style="font-size: 10px;">
-              <p style="font-size: 15px;"><strong>Return Bill</strong></p>
-            </div>
-          </div>
-  
-          <!-- Invoice Table -->
-          <table class="invoice-table">
-            <thead>
-              <tr>
-                <th>Sl</th>
-                <th>Item Id</th>
-                <th>Item Name</th>
-                <th>Qty</th>
-                <th>Unit</th>
-                <th>Price</th>
-                <th>Discount</th>
-                <th>Total Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${
-                productsChunk.length > 0
-                  ? productsChunk.map((product, index) => `
-                    <tr>
-                      <td>${index + 1 + (pageNumber - 1) * productsPerPage}</td>
-                      <td>${safeGet(product.item_id)}</td>
-                      <td>${safeGet(product.name)}</td>
-                      <td>${safeGet(product.quantity)}</td>
-                      <td>${safeGet(product.unit)}</td>
-                      <td>₹${safeGet(product.returnPrice)}</td>
-                      <td>₹${(product.quantity * parseFloat(discount / totalProducts))}</td>
-                      <td>₹${netReturnAmount}</td>
-                    </tr>
-                  `).join('')
-                  : '<tr><td colspan="8">No Products Available</td></tr>'
-              }
-            </tbody>
-          </table>
-  
-          <!-- Totals Section -->
-          ${showTotals ? `
-            <div style="display: flex; justify-content: space-between;" class="totals">
-              <div style="font-size: 10px;margin-top: 30px;" class="payment-instructions">
-                <p><strong>Authorised Signatory:</strong></p>
-                <p style="margin-top: 40px;">Date: ------------------------------</p>
-                <p style="font-weight: bold;text-align: center;margin-top: 20px;">KK TRADING</p>
-              </div>
-              <div>
-                <p>Subtotal: <span>₹${returnAmount}</span></p>
-                <p>CGST (9%): <span>₹${cgst}</span></p>
-                <p>SGST (9%): <span>₹${sgst}</span></p>
-                <p>Total Tax: <span>₹${totalTax}</span></p>
-                <p>Grand Total: <span>₹${netReturnAmount}</span></p>
-              </div>
-            </div>
-          ` : ``}
-  
-          <!-- Footer Section -->
-          <footer>Page ${pageNumber} of ${totalPages}</footer>
-          <footer>
-            <p>Thank you for your business! Returns must be made within 30 days of purchase.</p>
-          </footer>
+
+
+
+// Route to generate purchase invoice HTML
+// Route to generate purchase invoice HTML
+printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
+  try {
+    const {
+      sellerId,
+      sellerName,
+      sellerAddress,
+      sellerGst,
+      invoiceNo,
+      purchaseId,
+      billingDate,
+      invoiceDate,
+      items,
+      totals,
+      transportationDetails,
+    } = safeGet(req.body, '');
+
+    // Validate required fields
+    if (!invoiceNo || !purchaseId) {
+      return res.status(400).json({ error: 'invoiceNo and purchaseId are required' });
+    }
+
+    // Safely handle items array
+    const productList = Array.isArray(items) ? items : [];
+    const totalProducts = productList.length;
+    const billingAmount = parseFloat(totals.billingAmount) || 0;
+
+    const productsPerPage = 15;
+    const totalPages = Math.ceil(productList.length / productsPerPage);
+
+    // Generate a unique QR Code ID
+    const NewQrCodeId = `${invoiceNo}-${Date.now()}`;
+
+    // Save QR Code ID to the database
+    if (NewQrCodeId) {
+      const qrcodeDb = new QrCodeDB({
+        qrcodeId: NewQrCodeId,
+        billId: invoiceNo,
+      });
+
+      await qrcodeDb.save();
+    }
+
+    // Generate QR Code as Data URL
+    const qrCodeDataURL = await QRCode.toDataURL(NewQrCodeId);
+
+    // Function to generate invoice content per page
+    const generatePageHTML = (productsChunk, pageNumber, totalPages, showTotals) => `
+      <div class="invoice">
+        <!-- Header Section -->
+        <div class="header">
+          <p style="font-weight: 900; font-size: 24px;">KK TRADING</p>
+          <p style="font-size: 14px; margin-top: 5px; font-weight: 600;">Tiles, Granites, Sanitary Wares, UV Sheets</p>
         </div>
-      `;
-  
-      // Generate the full HTML content
-      let combinedHTMLContent = '';
-      const totalPages = Math.ceil(productList.length / productsPerPage);
-  
-      for (let i = 0; i < totalPages; i++) {
-        const productsChunk = productList.slice(
-          i * productsPerPage,
-          (i + 1) * productsPerPage
-        );
-        const showTotals = i === totalPages - 1;
-        combinedHTMLContent += generatePageHTML(
-          productsChunk,
-          i + 1,
-          totalPages,
+
+        <!-- Invoice Information -->
+        <div class="invoice-info">
+          <div>
+            <p style="font-size: 14px; font-weight: bolder;">Purchase No: <strong>${invoiceNo}</strong></p>
+            <p>Invoice Date: <strong>${new Date(invoiceDate).toLocaleDateString()}</strong></p>
+            <p>Billing Date: <strong>${new Date(billingDate).toLocaleDateString()}</strong></p>
+            <p>Seller: <strong>${sellerName}</strong></p>
+          </div>
+
+          <!-- QR Code Section -->
+          <div class="qr-code-section" style="text-align: right;">
+            <img src="${qrCodeDataURL}" alt="QR Code for Invoice" style="width: 80px; height: 80px;" />
+          </div>
+
+          <div>
+            <p><strong>From:</strong></p>
+            <p style="font-weight: bold;">KK TRADING</p>
+            <p style="font-size: 12px;">Moncompu, Chambakulam, Road</p>
+            <p style="font-size: 12px;">Alappuzha, 688503</p>
+            <p style="font-size: 12px;">Contact: 0477 2080282</p>
+            <p style="font-size: 12px;">tradeinkk@gmail.com</p>
+          </div>
+        </div>
+
+        <div class="invoice-info">
+          <!-- Seller Details -->
+          <div style="font-size: 12px;">
+            <p><strong>Seller Details:</strong></p>
+            <p style="font-weight: bold;">${sellerName}</p>
+            <p>${sellerAddress}</p>
+            <p>State: Kerala</p>
+            <p>GST: ${sellerGst || 'N/A'}</p>
+            <p>Seller ID: ${sellerId}</p>
+          </div>
+
+          <!-- Transportation Details -->
+          <div style="font-size: 12px;">
+            <p><strong>Transportation Details:</strong></p>
+            <p><strong>Logistic Transport:</strong></p>
+            <p>Company: ${transportationDetails.logistic.transportCompanyName || 'N/A'}</p>
+            <p>GST: ${transportationDetails.logistic.companyGst || 'N/A'}</p>
+            <p>Transportation Charges: ₹${parseFloat(transportationDetails.logistic.transportationCharges || 0).toFixed(2)}</p>
+            <p>Remark: ${transportationDetails.logistic.remark || 'N/A'}</p>
+            <br/>
+            <p><strong>Local Transport:</strong></p>
+            <p>Company: ${transportationDetails.local.transportCompanyName || 'N/A'}</p>
+            <p>GST: ${transportationDetails.local.companyGst || 'N/A'}</p>
+            <p>Transportation Charges: ₹${parseFloat(transportationDetails.local.transportationCharges || 0).toFixed(2)}</p>
+            <p>Remark: ${transportationDetails.local.remark || 'N/A'}</p>
+          </div>
+        </div>
+
+        <!-- Invoice Table -->
+        <table class="invoice-table">
+          <thead>
+            <tr>
+              <th>Sl</th>
+              <th>Item ID</th>
+              <th>Item Name</th>
+              <th>Brand</th>
+              <th>Category</th>
+              <th>Purchased Qty</th>
+              <th>Entered Qty</th>
+              <th>Purchased Unit</th>
+              <th>P.Unit</th>
+              <th>S.Unit</th>
+              <th>Bill Part Price</th>
+              <th>Cash Part Price</th>
+              <th>Allocated Other Expense</th>
+              <th>Total Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              productsChunk.length > 0
+                ? productsChunk
+                    .map(
+                      (product, index) => `
+                <tr>
+                  <td>${index + 1 + (pageNumber - 1) * productsPerPage}</td>
+                  <td>${safeGet(product.itemId)}</td>
+                  <td>${safeGet(product.name)}</td>
+                  <td>${safeGet(product.brand) || 'N/A'}</td>
+                  <td>${safeGet(product.category) || 'N/A'}</td>
+                  <td>${safeGet(product.quantity)}</td>
+                  <td>${safeGet(product.quantityInNumbers)}</td>
+                  <td>${safeGet(product.pUnit) || 'N/A'}</td>
+                  <td>${safeGet(product.pUnit) || 'N/A'}</td>
+                  <td>${safeGet(product.sUnit) || 'N/A'}</td>
+                  <td>₹${parseFloat(product.billPartPrice).toFixed(2)}</td>
+                  <td>₹${parseFloat(product.cashPartPrice).toFixed(2)}</td>
+                  <td>₹${parseFloat(product.allocatedOtherExpense).toFixed(2)}</td>
+                  <td>₹${(
+                    product.quantity *
+                    (parseFloat(product.billPartPrice) + parseFloat(product.cashPartPrice))
+                  ).toFixed(2)}</td>
+                </tr>`
+                    )
+                    .join('')
+                : '<tr><td colspan="14">No Products Available</td></tr>'
+            }
+          </tbody>
+        </table>
+
+        <!-- Totals Section -->
+        ${
           showTotals
-        );
-      }
-  
-      const fullHTMLContent = `
+            ? `
+        <div class="totals">
+          <div style="font-size: 12px;">
+            <p>Subtotal: ₹${parseFloat(totals.subTotal || 0).toFixed(2)}</p>
+            <p>Discount: ₹${parseFloat(totals.discount || 0).toFixed(2)}</p>
+            <p>CGST (9%): ₹${parseFloat(totals.cgst || 0).toFixed(2)}</p>
+            <p>SGST (9%): ₹${parseFloat(totals.sgst || 0).toFixed(2)}</p>
+            <p>Total Amount: ₹${parseFloat(totals.billingAmount || 0).toFixed(2)}</p>
+            <p>Transportation Charges: ₹${parseFloat(totals.transportationCharges || 0).toFixed(2)}</p>
+            <p>Unloading Charges: ₹${parseFloat(totals.unloadingCharge || 0).toFixed(2)}</p>
+            <p>Insurance: ₹${parseFloat(totals.insurance || 0).toFixed(2)}</p>
+            <p>Damage Price: ₹${parseFloat(totals.damagePrice || 0).toFixed(2)}</p>
+            <p>Total Other Expenses: ₹${parseFloat(totals.totalOtherExpenses || 0).toFixed(2)}</p>
+            <p>Grand Total Purchase Amount: ₹${parseFloat(totals.grandTotalPurchaseAmount || 0).toFixed(2)}</p>
+          </div>
+        </div>
+        `
+            : ``
+        }
+
+        <!-- Authorised Signatory Section -->
+        ${
+          showTotals
+            ? `
+        <div class="payment-instructions">
+          <p><strong>Authorised Signatory:</strong></p>
+          <p style="margin-top: 40px;">Date: ____________________________</p>
+          <p style="font-weight: bold; text-align: center; margin-top: 20px;">KK TRADING</p>
+        </div>
+        `
+            : ``
+        }
+      </div>
+    `;
+
+    // Generate the full HTML content
+    let combinedHTMLContent = '';
+    for (let i = 0; i < totalPages; i++) {
+      const productsChunk = productList.slice(i * productsPerPage, (i + 1) * productsPerPage);
+      const showTotals = i === totalPages - 1;
+      combinedHTMLContent += generatePageHTML(productsChunk, i + 1, totalPages, showTotals);
+    }
+
+    const fullHTMLContent = `
       <!DOCTYPE html>
       <html lang="en">
       <head>
-           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>KK RETURN INVOICE</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>KK PURCHASE INVOICE - ${invoiceNo}</title>
         <style>
           * {
             margin: 0;
@@ -860,15 +890,15 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
             padding: 20px;
             border-radius: 10px;
             box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-            margin: auto;
+            margin: 20px auto;
             page-break-after: always;
           }
           .header {
             background-color: #960101; /* Dark Red */
-            padding: 20px;
+            padding: 10px 20px;
             color: #fff;
             text-align: center;
-            font-size: 20px;
+            font-size: 24px;
             font-weight: bold;
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
@@ -881,12 +911,8 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
             border-bottom: 2px solid #e0e0e0;
           }
           .invoice-info div {
-            font-size: 10px;
+            font-size: 14px;
             color: #333;
-          }
-          .qr-code-section img {
-            width: 100px;
-            height: 100px;
           }
           .invoice-table {
             width: 100%;
@@ -898,13 +924,13 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
             color: #960101; /* Dark Red */
             padding: 12px;
             border: 1px solid #ddd;
-            font-size: 12px;
+            font-size: 14px;
           }
           .invoice-table td {
-            padding: 12px;
+            padding: 10px;
             text-align: center;
             border: 1px solid #ddd;
-            font-size: 10px;
+            font-size: 12px;
           }
           .totals {
             margin-top: 20px;
@@ -912,7 +938,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
           }
           .totals p {
             margin: 5px 0;
-            font-size: 10px;
+            font-size: 14px;
           }
           .totals span {
             font-weight: bold;
@@ -921,13 +947,17 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
           .payment-instructions {
             margin-top: 30px;
           }
+          .qr-code-section img {
+            width: 80px;
+            height: 80px;
+          }
           footer {
             text-align: center;
             margin-top: 40px;
-            font-size: 12px;
+            font-size: 14px;
             color: #777;
           }
-  
+
           @media print {
             body * {
               visibility: hidden;
@@ -953,16 +983,67 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
           ${combinedHTMLContent}
         </div>
       </body>
-      </html>`;
-  
-      // Send the HTML as a response
-      res.setHeader('Content-Type', 'text/html');
-      res.send(fullHTMLContent);
-    } catch (error) {
-      console.error('Error generating return invoice:', error);
-      res.status(500).json({ error: 'Internal Server Error' });
+      </html>
+    `;
+
+    // Send the HTML as a response
+    res.setHeader('Content-Type', 'text/html');
+    res.send(fullHTMLContent);
+  } catch (error) {
+    console.error('Error generating purchase invoice:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+
+
+printRouter.post('/verify-qr-code', async (req, res) => {
+  try {
+    const { qrcodeId } = req.body; // Directly destructure qrcodeId from req.body
+
+    if (!qrcodeId) {
+      return res.status(400).json({ verified: false, message: 'qrcodeId is required' });
     }
-  });
+
+    // Find the QR code in the database
+    const qrCodeEntry = await QrCodeDB.findOne({ qrcodeId });
+
+    if (!qrCodeEntry) {
+      return res.status(404).json({ verified: false, message: 'QR Code not found' });
+    }
+
+    if (qrCodeEntry.verified) {
+
+      return res.status(200).json({
+        verified: true,
+        message: 'QR Code already verified',
+        billId: qrCodeEntry.billId,
+        purchase,
+      });
+    }
+
+    // Mark as verified
+    qrCodeEntry.verified = true;
+    qrCodeEntry.verifiedAt = new Date();
+    await qrCodeEntry.save();
+
+    return res.status(200).json({
+      verified: true,
+      message: 'QR Code verified successfully',
+      billId: qrCodeEntry.billId,
+      purchase,
+    });
+  } catch (error) {
+    console.error('Error verifying QR Code:', error);
+    res.status(500).json({ verified: false, message: 'Internal Server Error' });
+  }
+});
+
+
+
+
+
+
 
 
 

@@ -18,6 +18,28 @@ purchaseRouter.get('/get/:id', async (req, res) => {
 });
 
 
+purchaseRouter.get("/suggestions", async (req, res) => {
+  try {
+    let { search = "" } = req.query;
+    search = search.replace(/\s+/g, "").toUpperCase(); // Normalize the search term
+
+    // Search both `invoiceNo` and `customerName` fields with case insensitive regex
+    const suggestions = await Purchase.find({
+      $or: [
+        { invoiceNo: { $regex: search, $options: "i" } },
+        { sellerName: { $regex: search, $options: "i" } }
+      ]
+    }).limit(5); // Limit suggestions to 5
+
+    res.status(200).json(suggestions);
+  } catch (error) {
+    console.error("Error fetching suggestions:", error); // Log the error for debugging
+    res.status(500).json({ message: "Error fetching suggestions" });
+  }
+  
+});
+
+
 purchaseRouter.post('/:id/payments', async (req, res) => {
     const { amount, method, remark, date } = req.body;
 
@@ -96,11 +118,36 @@ purchaseRouter.get('/lastOrder/id', async (req, res) => {
       const billing = await Purchase.find()
       .sort({ purchaseId: -1 })
       .collation({ locale: "en", numericOrdering: true });
-    const newId = "KP1"
+    const newId = "KP0"
       res.json(newId);
     }
   } catch (error) {
     res.status(500).json({ message: 'Error fetching last order' });
+  }
+});
+
+
+
+purchaseRouter.get('/purchaseinfo', async (req, res) => {
+  const page = parseFloat(req.query.page) || 1; // Default to page 1
+  const limit = parseFloat(req.query.limit) || 3; // Default to 10 items per page
+
+  try {
+    const totalBillings = await Purchase.countDocuments(); // Get total billing count
+    const purchases = await Purchase.find()
+      .sort({ billingDate: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    res.json({
+      purchases,
+      totalPages: Math.ceil(totalBillings / limit),
+      currentPage: page,
+      totalPurchases: totalBillings
+    });
+  } catch (error) {
+    console.error("Error fetching billings:", error);
+    res.status(500).json({ message: "Error fetching billings" });
   }
 });
 
