@@ -1024,6 +1024,28 @@ productRouter.get('/low-stock/all', async (req, res) => {
 });
 
 
+productRouter.get('/lastadded/id', async (req, res) => {
+  try {
+    // Fetch the invoice with the highest sequence number starting with 'K'
+    const item = await Product.findOne({ item_id: /^K\d+$/ })
+      .sort({ item_id: -1 })
+      .collation({ locale: "en", numericOrdering: true });
+
+    // Check if an invoice was found
+    if (item) {
+      res.json(item.item_id);
+    } else {
+      const newitem = await Product.find()
+      .sort({ item_id: -1 })
+      .collation({ locale: "en", numericOrdering: true });
+      res.json(newitem.item_id);
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching last order' });
+  }
+});
+
+
 
 
 export default productRouter;
