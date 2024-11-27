@@ -38,7 +38,7 @@ printRouter.post('/generate-pdf', async (req, res) => {
   const productList = Array.isArray(products) ? products : [];
   const totalProducts = productList.length;
 
-  const productsPerPage = 15;
+  const productsPerPage = 10;
 
   if(!billingAmount){
     res.status(500).json({message: 'error' });
@@ -352,7 +352,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
     billingAmount = parseFloat(billingAmount) || 0;
     paymentAmount = parseFloat(paymentAmount) || 0;
 
-    const productsPerPage = 15;
+    const productsPerPage = 10;
 
     const NewQrCodeId = `${invoiceNo}-${Date.now()}`
 
@@ -690,7 +690,7 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
     const totalProducts = productList.length;
     const billingAmount = parseFloat(totals.billingAmount) || 0;
 
-    const productsPerPage = 15;
+    const productsPerPage = 10;
     const totalPages = Math.ceil(productList.length / productsPerPage);
 
     // Generate a unique QR Code ID

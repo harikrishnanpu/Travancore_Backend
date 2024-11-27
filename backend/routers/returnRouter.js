@@ -24,7 +24,6 @@ returnRouter.post('/create', async (req, res) => {
 
   try {
     const {
-      returnNo,
       billingNo,
       returnDate,
       customerName,
@@ -34,6 +33,8 @@ returnRouter.post('/create', async (req, res) => {
       totalTax,
       netReturnAmount,
     } = req.body;
+
+    let { returnNo } = req.body;
 
     // Validate required fields
     if (
@@ -54,7 +55,20 @@ returnRouter.post('/create', async (req, res) => {
     // Check for unique returnNo
     const existingReturn = await Return.findOne({ returnNo }).session(session);
     if (existingReturn) {
-      throw new Error(`Return with Return No ${returnNo} already exists.`);
+      // Find the latest invoiceNo that starts with 'KK' and is followed by digits
+      const latestInvoice = await Return.findOne({ returnNo: /^CN\d+$/ })
+        .sort({ returnNo: -1 })
+        .collation({ locale: "en", numericOrdering: true })
+
+      if (!latestInvoice) {
+        // If no invoice exists, start with 'KK001'
+        returnNo = 'CN1';
+      } else {
+        const latestInvoiceNo = latestInvoice.returnNo;
+        const numberPart = parseInt(latestInvoiceNo.replace('CN', ''), 10);
+        const nextNumber = numberPart + 1;
+        returnNo = `CN${nextNumber}`;
+      }
     }
 
     // Validate Billing Number
@@ -118,10 +132,7 @@ returnRouter.post('/create', async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
-    res.status(201).json({
-      message: 'Return created successfully.',
-      return: savedReturn,
-    });
+    res.status(201).json(returnNo);
   } catch (error) {
     // Abort the transaction in case of an error
     await session.abortTransaction();
@@ -299,7 +310,16 @@ returnRouter.get('/damage/getDamagedData', async (req, res) => {
   
     try {
       const returnNo = req.params.returnNo;
-      const { returnDate, customerName, customerAddress, products } = req.body;
+      const {
+        billingNo,
+        returnDate,
+        customerName,
+        customerAddress,
+        products,
+        returnAmount,
+        totalTax,
+        netReturnAmount,
+      } = req.body;
   
       // Filter out products with quantity 0
       const filteredProducts = products.filter((product) => product.quantity > 0);
@@ -309,6 +329,10 @@ returnRouter.get('/damage/getDamagedData', async (req, res) => {
         { returnNo: returnNo },
         {
           returnDate,
+          billingNo,
+          returnAmount,
+          totalTax,
+          netReturnAmount,
           customerName,
           customerAddress,
           products: filteredProducts,

@@ -23,6 +23,7 @@ import printRouter from './routers/printRouter.js';
 import accountRouter from './routers/accountPaymentsRouter.js';
 import sellerPaymentsRouter from './routers/sellerPaymentsRouter.js';
 import transportPaymentsRouter from './routers/transportPaymentsRouter.js';
+import siteReportRouter from './routers/siteReportRouter.js';
 
 
 dotenv.config();
@@ -49,6 +50,7 @@ app.use('/api/print',printRouter);
 app.use('/api/accounts',accountRouter);
 app.use('/api/sellerPayments',sellerPaymentsRouter);
 app.use('/api/transportpayments', transportPaymentsRouter);
+app.use('/api/site-report', siteReportRouter);
 
 
 app.get('/api/config/paypal', (req, res) => {

@@ -253,12 +253,11 @@ productRouter.get(
 
 productRouter.post(
   '/',
-  isAuth,
   expressAsyncHandler(async (req, res) => {
     const product = new Product({
       name: 'Product Name',
       item_id: Date.now(),
-      seller: req.user._id,
+      seller: 'Supplier',
       image: '/images/',
       price: 0,
       category: 'Category',
@@ -404,9 +403,8 @@ productRouter.post(
     const {
       sellerId,
       sellerName,
-      invoiceNo,
       items,
-      purchaseId,
+      invoiceNo,
       sellerAddress,
       sellerGst,
       billingDate,
@@ -414,6 +412,8 @@ productRouter.post(
       totals,
       transportationDetails,
     } = req.body;
+
+    let { purchaseId } = req.body;
 
         // **1. Check if Purchase with the same invoiceNo or purchaseId already exists**
 
@@ -425,9 +425,20 @@ productRouter.post(
       });
 
       if (existingPurchase) {
-        return res.status(400).json({
-          message: 'Purchase with this invoice number or purchase ID already exists.',
-        });
+        // Find the latest invoiceNo that starts with 'KK' and is followed by digits
+        const latestInvoice = await Purchase.findOne({ purchaseId: /^KP\d+$/ })
+          .sort({ purchaseId: -1 })
+          .collation({ locale: "en", numericOrdering: true })
+  
+        if (!latestInvoice) {
+          // If no invoice exists, start with 'KK001'
+          purchaseId = 'KP1';
+        } else {
+          const latestInvoiceNo = latestInvoice.purchaseId;
+          const numberPart = parseInt(latestInvoiceNo.replace('KP', ''), 10);
+          const nextNumber = numberPart + 1;
+          purchaseId = `KP${nextNumber}`;
+        }
       }
 
 
@@ -612,7 +623,7 @@ productRouter.post(
         await newSellerPayment.save();
       }
 
-      res.json({ message: 'Purchase created successfully' });
+      res.json(purchaseId);
     } catch (error) {
       console.error('Error creating purchase:', error);
       res.status(500).json({ message: 'Error creating purchase', error });

@@ -10,9 +10,17 @@ accountRouter.post('/create', async (req, res) => {
   
       // Create new PaymentAccount instance
       const newAccount = new PaymentsAccount({
-        accountName,
-        balanceAmount: balance || 0,
+        accountName
       });
+
+      const billingEntry = {
+        amount: balance || 0,
+        method: 'Opening Account',
+        remark: 'Initial Balance',
+        submittedBy: req.body.userId,
+      }
+
+      newAccount.paymentsIn.push(billingEntry)
   
       // Save to database (balanceAmount will be auto-calculated)
       const savedAccount = await newAccount.save();
@@ -23,6 +31,20 @@ accountRouter.post('/create', async (req, res) => {
       res.status(500).json({ message: 'Server Error' });
     }
   });
+
+
+  accountRouter.delete('/acc/:id/delete', async (req, res) => {
+    try {
+      const account = await PaymentsAccount.findByIdAndDelete(req.params.id);
+      if (!account) {
+        return res.status(404).json({ message: 'Payment Account not found' });
+      }
+      res.json({ message: 'Payment Account deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting payment account:', error);
+      res.status(500).json({ message: 'Server Error' });
+    }
+  })
 
 
 
