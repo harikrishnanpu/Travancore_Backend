@@ -175,27 +175,58 @@ transactionRouter.get('/allbill/payments', async (req, res) => {
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
 
-    // Fetch billings, including payments and otherExpenses
+    // Fetch all bills for the user (not filtering by invoiceDate)
     const billings = await Billing.find({
-      invoiceDate: { $gte: start, $lt: end },
       user: req.body.userId, // Ensure this is passed in the request body
     }).populate('products') // If products are references
       .populate('deliveries') // If deliveries are references
-      .lean(); // Use `lean()` for better performance if you don't need Mongoose document methods
+      .lean(); // Use lean() for better performance if you don't need Mongoose document methods
 
-    // Format the response to include payments and other expenses explicitly
-    const formattedBillings = billings.map(billing => ({
-      ...billing,
-      payments: billing.payments || [],
-      otherExpenses: billing.otherExpenses || [],
-    }));
+    // Filter payments done on the specified date
+    const payments = [];
+    billings.forEach(billing => {
+      (billing.payments || []).forEach(payment => {
+        if (payment.date >= start && payment.date < end) {
+          payments.push({
+            billingId: billing._id,
+            amount: payment.amount,
+            method: payment.method,
+            date: payment.date,
+            remark: payment.remark,
+          });
+        }
+      });
+    });
 
-    res.json(formattedBillings);
+    // Filter other expenses done on the specified date
+    const otherExpenses = [];
+    billings.forEach(billing => {
+      (billing.otherExpenses || []).forEach(expense => {
+        if (expense.date >= start && expense.date < end) {
+          otherExpenses.push({
+            billingId: billing._id,
+            amount: expense.amount,
+            remark: expense.remark,
+            date: expense.date,
+          });
+        }
+      });
+    });
+
+    // Format the response
+    const formattedResponse = {
+      billings, // All bills
+      payments: payments || [], // Payments filtered by date
+      otherExpenses: otherExpenses || [], // Other expenses filtered by date
+    };
+
+    res.json(formattedResponse);
   } catch (error) {
     console.error('Error fetching billings:', error);
     res.status(500).json({ message: 'Server Error' });
   }
 });
+
 
 
 

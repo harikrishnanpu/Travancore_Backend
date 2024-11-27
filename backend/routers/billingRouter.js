@@ -1000,9 +1000,9 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
     
       account.paymentsOut.push(...validOtherExpenses.map(expense => ({
         amount: parseFloat(expense.amount),
-        remark: expense.remark || "",
-        paymentMethod: paymentMethod,
-        userId: userId
+        remark: `Other Expense For Bill ${billing.invoiceNo} : ${expense.remark}`,
+        method: paymentMethod,
+        submittedBy: userId
       })));
 
       const parsedfuelCharge = parseFloat(fuelCharge)
@@ -1010,7 +1010,7 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
       if(parsedfuelCharge > 0){
         account.paymentsOut.push({
           amount: parsedfuelCharge,
-          remark: 'Fuel Charge',
+          remark:`${billing.invoiceNo} : Fuel Charge`,
           method: paymentMethod,
           submittedBy: userId
         });
@@ -1018,7 +1018,7 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
     
       await account.save();
     } catch (error) {
-      console.error('Error processing payment:', error);
+      console.log('Error processing payment:', error);
       return res.status(500).json({ message: 'Error processing payment', error });
     }
 
