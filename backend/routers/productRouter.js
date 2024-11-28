@@ -19,17 +19,14 @@ productRouter.get(
   expressAsyncHandler(async (req, res) => {
     const pageSize = 20;
     const page = Number(req.query.pageNumber) || 1;
-    const name = req.query.name ? req.query.name.toUpperCase() : '';
+    const searchQuery = req.query.name ? req.query.name.toUpperCase() : '';
     const category = req.query.category ? req.query.category.toUpperCase() : '';
-    const seller = req.query.seller ? req.query.seller.toUpperCase() : '';
     const order = req.query.order ? req.query.order.toUpperCase() : '';
     const min = req.query.min && Number(req.query.min) !== 0 ? Number(req.query.min) : 0;
     const max = req.query.max && Number(req.query.max) !== 0 ? Number(req.query.max) : 0;
     const rating = req.query.rating && Number(req.query.rating) !== 0 ? Number(req.query.rating) : 0;
 
-    const nameFilter = name ? { name: { $regex: name, $options: 'i' } } : {};
     const categoryFilter = category ? { category } : {};
-    const sellerFilter = seller ? { seller } : {};
     const priceFilter = min && max ? { price: { $gte: min, $lte: max } } : {};
     const ratingFilter = rating ? { rating: { $gte: rating } } : {};
     const sortOrder =
@@ -42,31 +39,37 @@ productRouter.get(
         : { _id: -1 };
 
     try {
-      let products;
+      let products = [];
       let count = 0;
 
-      // Check if name is a valid item_id
-      if (name) {
-        const itemById = await Product.findOne({ item_id: name });
-        if (itemById) {
-          products = [itemById];
+      // Search for products based on `item_id`, `name`, or `seller`
+      if (searchQuery) {
+        const byItemId = await Product.findOne({ item_id: searchQuery });
+        const bySeller = await Product.find({ seller: { $regex: searchQuery, $options: 'i' } });
+        const byName = await Product.find({ name: { $regex: searchQuery, $options: 'i' } });
+
+        // Prioritize item_id match; otherwise, include seller and name matches
+        if (byItemId) {
+          products = [byItemId];
           count = 1;
+        } else if (bySeller.length > 0) {
+          products = bySeller;
+          count = bySeller.length;
+        } else if (byName.length > 0) {
+          products = byName;
+          count = byName.length;
         }
       }
 
-      // If name is not an item_id, use regular filters
-      if (!products) {
+      // Apply filters if no specific matches found or for additional filtering
+      if (products.length === 0) {
         count = await Product.countDocuments({
-          ...sellerFilter,
-          ...nameFilter,
           ...categoryFilter,
           ...priceFilter,
           ...ratingFilter,
         });
 
         products = await Product.find({
-          ...sellerFilter,
-          ...nameFilter,
           ...categoryFilter,
           ...priceFilter,
           ...ratingFilter,
@@ -77,12 +80,21 @@ productRouter.get(
           .limit(pageSize);
       }
 
-      res.send({ products, page, totalProducts: count, pages: Math.ceil(count / pageSize) });
+      // Paginate if there are multiple results
+      const paginatedProducts = products.slice(pageSize * (page - 1), pageSize * page);
+
+      res.send({
+        products: paginatedProducts,
+        page,
+        totalProducts: count,
+        pages: Math.ceil(count / pageSize),
+      });
     } catch (error) {
       res.status(500).send({ message: error.message });
     }
   })
 );
+
 
 
 
