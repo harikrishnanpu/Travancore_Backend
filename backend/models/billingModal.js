@@ -11,6 +11,7 @@ const BillingSchema = new mongoose.Schema(
     salesmanName: { type: String, required: true },
     expectedDeliveryDate: { type: Date, required: true },
     deliveryStatus: { type: String, default: "Pending" },
+    grandTotal: {type: Number, required: true},
     billingAmount: { type: Number, required: true }, // Total before discount
     discount: { type: Number, default: 0 },
     billingAmountReceived: { type: Number, default: 0 },
@@ -166,7 +167,7 @@ BillingSchema.pre("save", function (next) {
   );
 
   // Calculate net amount after discount
-  const netAmount = this.billingAmount - (this.discount || 0);
+  const netAmount = this.grandTotal || 0;
 
   // Update the payment status
   if (this.billingAmountReceived >= netAmount) {

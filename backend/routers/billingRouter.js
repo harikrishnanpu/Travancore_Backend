@@ -25,6 +25,7 @@ billingRouter.post('/create', async (req, res) => {
       salesmanName,
       expectedDeliveryDate,
       deliveryStatus = "Pending",
+      grandTotal,
       billingAmount,
       discount = 0,
       customerName,
@@ -140,6 +141,7 @@ billingRouter.post('/create', async (req, res) => {
       salesmanName,
       expectedDeliveryDate,
       deliveryStatus,
+      grandTotal,
       billingAmount: parsedBillingAmount,
       discount: parsedDiscount,
       customerName,
@@ -325,6 +327,7 @@ billingRouter.post('/edit/:id', async (req, res) => {
       salesmanName,
       expectedDeliveryDate,
       billingAmount,
+      grandTotal,
       customerName,
       customerAddress,
       products,
@@ -593,6 +596,7 @@ if (paymentAmount && paymentMethod) {
     // === 5. Update Billing Details ===
 
     existingBilling.invoiceNo = invoiceNo;
+    existingBilling.grandTotal = parseFloat(grandTotal) || 0;
     existingBilling.invoiceDate = new Date(invoiceDate);
     existingBilling.salesmanName = salesmanName;
     existingBilling.expectedDeliveryDate = new Date(expectedDeliveryDate);
@@ -891,7 +895,7 @@ billingRouter.get("/billing/suggestions", async (req, res) => {
         { invoiceNo: { $regex: search, $options: "i" } },
         { customerName: { $regex: search, $options: "i" } }
       ]
-    }).limit(5); // Limit suggestions to 5
+    }).sort({ invoiceNo: -1 }).collation({ locale: "en", numericOrdering: true }).limit(5); // Limit suggestions to 5
 
     res.status(200).json(suggestions);
   } catch (error) {
@@ -899,6 +903,36 @@ billingRouter.get("/billing/suggestions", async (req, res) => {
     res.status(500).json({ message: "Error fetching suggestions" });
   }
 });
+
+
+billingRouter.get("/billing/driver/suggestions", async (req, res) => {
+  try {
+    let { search = "" } = req.query;
+    search = search.replace(/\s+/g, "").toUpperCase(); // Normalize the search term
+
+    // Search both `invoiceNo` and `customerName` fields with case insensitive regex
+    const suggestions = await Billing.find({
+      $and: [
+        {
+          $or: [
+            { invoiceNo: { $regex: search, $options: "i" } },
+            { customerName: { $regex: search, $options: "i" } }
+          ]
+        },
+        { deliveryStatus: { $nin: [ "Delivered"] } } // Filter only 'Sent' status
+      ]
+    })
+      .sort({ invoiceNo: -1 })
+      .collation({ locale: "en", numericOrdering: true })
+      .limit(5); // Limit suggestions to 5
+
+    res.status(200).json(suggestions);
+  } catch (error) {
+    console.error("Error fetching suggestions:", error); // Log the error for debugging
+    res.status(500).json({ message: "Error fetching suggestions" });
+  }
+});
+
 
 
 
