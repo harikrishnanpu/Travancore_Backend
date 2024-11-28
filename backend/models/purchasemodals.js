@@ -13,7 +13,7 @@ const itemSchema = mongoose.Schema(
     psRatio: { type: Number },
     length: { type: Number },
     breadth: { type: Number },
-    size: { type: Number },
+    size: { type: String },
     pUnit: { type: String },
     cashPartPrice: { type: Number, required: true },
     billPartPrice: { type: Number, required: true },
