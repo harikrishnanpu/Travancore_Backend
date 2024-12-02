@@ -6,12 +6,11 @@ import mongoose from 'mongoose';
 import Purchase from '../models/purchasemodals.js';
 import User from '../models/userModel.js';
 import PaymentsAccount from '../models/paymentsAccountModal.js';
+import CustomerAccount from '../models/customerModal.js';
 
 const billingRouter = express.Router();
 
-// Create a new billing entry
 
-// POST /create - Create a new billing record
 // =========================
 // Route: Create Billing Entry
 // =========================
@@ -36,15 +35,15 @@ billingRouter.post('/create', async (req, res) => {
       paymentMethod,
       paymentReceivedDate,
       salesmanPhoneNumber,
-      unloading,
-      transportation,
-      handlingcharge,
+      unloading = 0,
+      transportation = 0,
+      handlingcharge = 0,
       remark,
       userId,
       products // Expected to be an array of objects with item_id and quantity
     } = req.body;
 
-    let invoiceNo = req.body.invoiceNo;
+    let { invoiceNo, customerId } = req.body;
 
     // -----------------------
     // 1. Validate Required Fields
@@ -55,6 +54,7 @@ billingRouter.post('/create', async (req, res) => {
       !salesmanName ||
       !customerName ||
       !customerAddress ||
+      !customerId ||
       !products ||
       !salesmanPhoneNumber ||
       !Array.isArray(products) ||
@@ -70,29 +70,9 @@ billingRouter.post('/create', async (req, res) => {
     // -----------------------
     const existingBill = await Billing.findOne({ invoiceNo }).session(session);
     if (existingBill) {
-      // Find the latest invoiceNo that starts with 'KK' and is followed by digits
-      const latestInvoice = await Billing.findOne({ invoiceNo: /^KK\d+$/ })
-        .sort({ invoiceNo: -1 })
-        .collation({ locale: "en", numericOrdering: true })
-        .session(session);
-
-      if (!latestInvoice) {
-        // If no invoice exists, start with 'KK001'
-        invoiceNo = 'KK1';
-      } else {
-        const latestInvoiceNo = latestInvoice.invoiceNo;
-        const numberPart = parseInt(latestInvoiceNo.replace('KK', ''), 10);
-
-        // Increment the numerical part
-        const nextNumber = numberPart + 1;
-
-        // Format the next number with leading zeros to maintain a 3-digit format
-        const nextInvoiceNo = `KK${nextNumber.toString()}`;
-        console.log(`Invoice number ${invoiceNo} exists. Assigning next invoice number: ${nextInvoiceNo}`);
-
-        // Assign the new invoice number to the request body
-        invoiceNo = nextInvoiceNo;
-      }
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: `Invoice number ${invoiceNo} already exists` });
     }
 
     // -----------------------
@@ -133,82 +113,126 @@ billingRouter.post('/create', async (req, res) => {
     const isAdmin = user.isAdmin;
 
     // -----------------------
-    // 5. Initialize Billing Data
+    // 5. Find or Create Customer Account
+    // -----------------------
+    let customerAccount = await CustomerAccount.findOne({ customerId: customerId.trim() }).session(session);
+
+    if (!customerAccount) {
+      // Create new customer account
+      customerAccount = new CustomerAccount({
+        customerId: customerId.trim(),
+        customerName: customerName.trim(),
+        customerAddress: customerAddress.trim(),
+        customerContactNumber: customerContactNumber.trim(),
+        bills: [], // Initialize bills array
+        payments: [] // Initialize payments array
+      });
+    }
+
+    // Check if the bill with the same invoiceNo already exists in customer's bills array
+    const existingBillInCustomer = customerAccount.bills.find(bill => bill.invoiceNo === invoiceNo.trim());
+    if (existingBillInCustomer) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: `Invoice number ${invoiceNo} already exists for this customer` });
+    }
+
+    // -----------------------
+    // 6. Initialize Billing Data
     // -----------------------
     const billingData = new Billing({
-      invoiceNo,
-      invoiceDate,
-      salesmanName,
-      expectedDeliveryDate,
+      invoiceNo: invoiceNo.trim(),
+      invoiceDate: new Date(invoiceDate),
+      salesmanName: salesmanName.trim(),
+      expectedDeliveryDate: new Date(expectedDeliveryDate),
       deliveryStatus,
-      grandTotal,
+      grandTotal: parseFloat(grandTotal),
       billingAmount: parsedBillingAmount,
       discount: parsedDiscount,
-      customerName,
-      customerAddress,
-      customerContactNumber,
-      marketedBy,
+      customerId: customerId.trim(),
+      customerName: customerName.trim(),
+      customerAddress: customerAddress.trim(),
+      customerContactNumber: customerContactNumber.trim(),
+      marketedBy: marketedBy ? marketedBy.trim() : '',
       submittedBy: userId,
-      handlingCharge: handlingcharge,
-      remark: remark,
+      handlingCharge: parseFloat(handlingcharge),
+      remark: remark ? remark.trim() : '',
       products,
-      unloading: unloading || 0,
-      transportation: transportation || 0,
+      unloading: parseFloat(unloading),
+      transportation: parseFloat(transportation),
       payments: [], // Initialize payments as an empty array
       isApproved: isAdmin // Automatically approve if user is admin
     });
 
+    // -----------------------
+    // 7. Associate Bill with Customer Account
+    // -----------------------
+    customerAccount.bills.push({
+      invoiceNo: invoiceNo.trim(),
+      billAmount: parsedBillingAmount,
+      invoiceDate: new Date(invoiceDate),
+      deliveryStatus,
+    });
 
     // -----------------------
-    // 6. Add Initial Payment if Provided
+    // 8. Add Initial Payment if Provided
     // -----------------------
     if (paymentAmount && paymentMethod) {
       const parsedPaymentAmount = parseFloat(paymentAmount);
-    
+
       // Validate payment amount
       if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ message: 'Invalid payment amount' });
       }
-    
+
       // Ensure paymentAmount does not exceed totalAmount
       if (parsedPaymentAmount > totalAmount) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ message: 'Payment amount cannot exceed total amount after discount' });
       }
-    
+
       const currentDate = new Date(paymentReceivedDate || Date.now());
-    
+
       const paymentEntry = {
         amount: parsedPaymentAmount,
-        method: paymentMethod,
+        method: paymentMethod.trim(),
         date: currentDate,
       };
-    
+
       const accountPaymentEntry = {
         amount: parsedPaymentAmount,
-        method: paymentMethod,
-        remark: `Bill ${invoiceNo}`,
+        method: paymentMethod.trim(),
+        remark: `Bill ${invoiceNo.trim()}`,
         submittedBy: userId,
+        date: currentDate,
       };
-    
+
       try {
-        const account = await PaymentsAccount.findOne({ accountId: paymentMethod });
-      
+        const account = await PaymentsAccount.findOne({ accountId: paymentMethod.trim() }).session(session);
+
         if (!account) {
           console.log(`No account found for accountId: ${paymentMethod}`);
           await session.abortTransaction();
           session.endSession();
           return res.status(404).json({ message: 'Payment account not found' });
         }
-      
+
         account.paymentsIn.push(accountPaymentEntry);
-      
-        await account.save();
-      
-        // Add the payment to the payments array
+        await account.save({ session });
+
+        // Add payment to CustomerAccount's payments array
+        customerAccount.payments.push({
+          amount: parsedPaymentAmount,
+          method: paymentMethod.trim(),
+          remark: `Bill ${invoiceNo.trim()}`,
+          submittedBy: userId,
+          date: currentDate,
+        });
+
+        // Add the payment to the billing payments array
         billingData.payments.push(paymentEntry);
       } catch (error) {
         console.error('Error processing payment:', error);
@@ -216,16 +240,14 @@ billingRouter.post('/create', async (req, res) => {
         session.endSession();
         return res.status(500).json({ message: 'Error processing payment', error });
       }
-      
     }
-    
 
     // -----------------------
-    // 7. Update Salesman Phone Number
+    // 9. Update Salesman Phone Number
     // -----------------------
-    const salesmanUser = await User.findOne({ name: salesmanName }).session(session);
+    const salesmanUser = await User.findOne({ name: salesmanName.trim() }).session(session);
     if (salesmanUser) {
-      salesmanUser.contactNumber = salesmanPhoneNumber;
+      salesmanUser.contactNumber = salesmanPhoneNumber.trim();
       await salesmanUser.save({ session });
     } else {
       await session.abortTransaction();
@@ -234,14 +256,7 @@ billingRouter.post('/create', async (req, res) => {
     }
 
     // -----------------------
-    // 8. Approve Bill if User is Admin
-    // -----------------------
-    if (isAdmin) {
-      billingData.isApproved = true;
-    }
-
-    // -----------------------
-    // 9. Conditionally Update Stock
+    // 10. Conditionally Update Stock
     // -----------------------
     let productUpdatePromises = [];
     if (isAdmin) {
@@ -257,7 +272,7 @@ billingRouter.post('/create', async (req, res) => {
         }
 
         // Fetch product using item_id
-        const product = await Product.findOne({ item_id }).session(session);
+        const product = await Product.findOne({ item_id: item_id.trim() }).session(session);
         if (!product) {
           await session.abortTransaction();
           session.endSession();
@@ -278,8 +293,9 @@ billingRouter.post('/create', async (req, res) => {
     }
 
     // -----------------------
-    // 10. Save Billing Data and Update Products
+    // 11. Save Billing Data and Update Products
     // -----------------------
+    await customerAccount.save({ session });
     await billingData.save({ session });
 
     if (isAdmin) {
@@ -287,13 +303,13 @@ billingRouter.post('/create', async (req, res) => {
     }
 
     // -----------------------
-    // 11. Commit the Transaction
+    // 12. Commit the Transaction
     // -----------------------
     await session.commitTransaction();
     session.endSession();
 
     // -----------------------
-    // 12. Respond to Client
+    // 13. Respond to Client
     // -----------------------
     res.status(201).json({ message: 'Billing data saved successfully', billingData });
   } catch (error) {
@@ -331,11 +347,12 @@ billingRouter.post('/edit/:id', async (req, res) => {
       customerName,
       customerAddress,
       products,
-      discount,
-      unloading,
-      transportation,
-      handlingcharge,
+      discount = 0,
+      unloading = 0,
+      transportation = 0,
+      handlingcharge = 0,
       remark,
+      customerId,
       paymentStatus,
       deliveryStatus,
       customerContactNumber,
@@ -343,7 +360,8 @@ billingRouter.post('/edit/:id', async (req, res) => {
       paymentMethod,
       paymentReceivedDate,
       marketedBy,
-      userId
+      userId,
+      salesmanPhoneNumber
     } = req.body;
 
     // === 1. Basic Validation ===
@@ -358,8 +376,10 @@ billingRouter.post('/edit/:id', async (req, res) => {
       !customerName ||
       !customerAddress ||
       !customerContactNumber ||
+      !customerId ||
       !products ||
-      !Array.isArray(products)
+      !Array.isArray(products) ||
+      products.length === 0
     ) {
       await session.abortTransaction();
       session.endSession();
@@ -382,7 +402,7 @@ billingRouter.post('/edit/:id', async (req, res) => {
     if (!user) {
       await session.abortTransaction();
       session.endSession();
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: 'User not found.' });
     }
 
     const isAdmin = user.isAdmin;
@@ -414,218 +434,328 @@ billingRouter.post('/edit/:id', async (req, res) => {
       (p) => !updatedProductIds.includes(p.item_id)
     );
 
+    // === 3.1. Remove Products Not Present in Updated List ===
+    for (const product of productsToRemove) {
+      const productInDB = await Product.findOne({ item_id: product.item_id }).session(session);
+      if (productInDB) {
+        // Add back the quantity to stock only if stock was already deducted
+        if (isBillApproved || isAdmin) {
+          productInDB.countInStock += parseFloat(product.quantity);
+          await productInDB.save({ session });
+        }
 
-// === 3.1. Remove Products Not Present in Updated List ===
-for (const product of productsToRemove) {
-  const productInDB = productMap[product.item_id];
-  if (productInDB) {
-    // Add back the quantity to stock only if stock was already deducted
-    if (isBillApproved) {
-      productInDB.countInStock += parseFloat(product.quantity);
-      await productInDB.save({ session });
+        // Remove the product from billing
+        existingBilling.products.id(product._id).remove();
+      }
     }
-
-    // Remove the product from billing
-    existingBilling.products.id(product._id).remove();
-  }
-}
-
-
 
     // === 3.2. Update Existing Products and Add New Products ===
-const productUpdatePromises = [];
+    const productUpdatePromises = [];
 
-for (const updatedProduct of products) {
-  const {
-    item_id,
-    name,
-    category,
-    brand,
-    quantity,
-    sellingPrice,
-    enteredQty,
-    sellingPriceinQty,
-    unit,
-    length,
-    breadth,
-    psRatio,
-    size
-  } = updatedProduct;
+    for (const updatedProduct of products) {
+      const {
+        item_id,
+        name,
+        category,
+        brand,
+        quantity,
+        sellingPrice,
+        enteredQty,
+        sellingPriceinQty,
+        unit,
+        length,
+        breadth,
+        psRatio,
+        size
+      } = updatedProduct;
 
-  const trimmedItemId = item_id.trim();
-  const newQuantity = parseFloat(quantity);
+      const trimmedItemId = item_id.trim();
+      const newQuantity = parseFloat(quantity);
 
-  // Validate product exists in the database
-  const productInDB = productMap[trimmedItemId];
-  if (!productInDB) {
-    await session.abortTransaction();
-    session.endSession();
-    return res.status(404).json({
-      message: `Product with ID ${trimmedItemId} not found.`,
-    });
-  }
-
-  // Find the product in the existing billing
-  const existingProductInBilling = existingBilling.products.find(
-    (p) => p.item_id === trimmedItemId
-  );
-
-  if (existingProductInBilling) {
-    // Calculate quantity difference
-    const previousQuantity = parseFloat(existingProductInBilling.quantity);
-    const quantityDifference = newQuantity - previousQuantity;
-
-    if (isBillApproved || isAdmin) {
-      // Calculate new stock count
-      const newStockCount = productInDB.countInStock - quantityDifference;
-
-      if (newStockCount < 0) {
+      // Validate product exists in the database
+      const productInDB = productMap[trimmedItemId];
+      if (!productInDB) {
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({
-          message: `Insufficient stock for product ID ${trimmedItemId}. Only ${
-            productInDB.countInStock + previousQuantity
-          } available.`,
+        return res.status(404).json({
+          message: `Product with ID ${trimmedItemId} not found.`,
         });
       }
 
-      // Update stock count
-      productInDB.countInStock = newStockCount;
-      productUpdatePromises.push(productInDB.save({ session }));
+      // Find the product in the existing billing
+      const existingProductInBilling = existingBilling.products.find(
+        (p) => p.item_id === trimmedItemId
+      );
+
+      if (existingProductInBilling) {
+        // Calculate quantity difference
+        const previousQuantity = parseFloat(existingProductInBilling.quantity);
+        const quantityDifference = newQuantity - previousQuantity;
+
+        if (isBillApproved || isAdmin) {
+          // Calculate new stock count
+          const newStockCount = productInDB.countInStock - quantityDifference;
+
+          if (newStockCount < 0) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              message: `Insufficient stock for product ID ${trimmedItemId}. Only ${
+                productInDB.countInStock + previousQuantity
+              } available.`,
+            });
+          }
+
+          // Update stock count
+          productInDB.countInStock = newStockCount;
+          productUpdatePromises.push(productInDB.save({ session }));
+        }
+
+        // Update product details in billing
+        existingProductInBilling.quantity = newQuantity;
+        existingProductInBilling.sellingPrice = parseFloat(sellingPrice) || 0;
+        existingProductInBilling.enteredQty = parseFloat(enteredQty) || 0;
+        existingProductInBilling.sellingPriceinQty = parseFloat(sellingPriceinQty) || 0;
+        existingProductInBilling.unit = unit || existingProductInBilling.unit;
+        existingProductInBilling.length = parseFloat(length) || 0;
+        existingProductInBilling.breadth = parseFloat(breadth) || 0;
+        existingProductInBilling.psRatio = parseFloat(psRatio) || 0;
+        existingProductInBilling.size = size || productInDB.size;
+      } else {
+        // New product to be added to billing
+        if (isBillApproved || isAdmin) {
+          // Ensure sufficient stock
+          if (productInDB.countInStock < newQuantity) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              message: `Insufficient stock for product ID ${trimmedItemId}. Only ${productInDB.countInStock} available.`,
+            });
+          }
+
+          // Deduct stock
+          productInDB.countInStock -= newQuantity;
+          productUpdatePromises.push(productInDB.save({ session }));
+        }
+
+        // Add new product to billing
+        existingBilling.products.push({
+          item_id: trimmedItemId,
+          name: name || productInDB.name,
+          sellingPrice: parseFloat(sellingPrice) || 0,
+          quantity: newQuantity,
+          category: category || productInDB.category,
+          brand: brand || productInDB.brand,
+          unit: unit || productInDB.unit,
+          sellingPriceinQty: parseFloat(sellingPriceinQty) || 0,
+          enteredQty: parseFloat(enteredQty) || 0,
+          length: parseFloat(length) || 0,
+          breadth: parseFloat(breadth) || 0,
+          psRatio: parseFloat(psRatio) || 0,
+          size: productInDB.size || size,
+        });
+      }
     }
 
-    // Update product details in billing
-    existingProductInBilling.quantity = newQuantity;
-    existingProductInBilling.sellingPrice = parseFloat(sellingPrice) || 0;
-    existingProductInBilling.enteredQty = parseFloat(enteredQty) || 0;
-    existingProductInBilling.sellingPriceinQty = parseFloat(sellingPriceinQty) || 0;
-    existingProductInBilling.unit = unit || existingProductInBilling.unit;
-    existingProductInBilling.length = parseFloat(length) || 0;
-    existingProductInBilling.breadth = parseFloat(breadth) || 0;
-    existingProductInBilling.psRatio = parseFloat(psRatio) || 0;
-    existingProductInBilling.size = size || productInDB.size;
-  } else {
-    // New product to be added to billing
-    if (isBillApproved || isAdmin) {
-      // Ensure sufficient stock
-      if (productInDB.countInStock < newQuantity) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          message: `Insufficient stock for product ID ${trimmedItemId}. Only ${productInDB.countInStock} available.`,
+    // === 4. Find or Create Customer Account Based on Updated Customer Information ===
+
+    let customerAccount;
+
+    // Store the old customerId before updating
+    const oldCustomerId = existingBilling.customerId;
+
+    // Check if customer details have changed
+    const isCustomerChanged =
+      existingBilling.customerId !== customerId.trim();
+
+    if (isCustomerChanged) {
+      // Try to find an existing CustomerAccount with the new customerId
+      customerAccount = await CustomerAccount.findOne({ customerId: customerId.trim() }).session(session);
+
+      if (!customerAccount) {
+        // If no existing account, create a new CustomerAccount
+        customerAccount = new CustomerAccount({
+          customerId: customerId.trim(),
+          customerName: customerName.trim(),
+          customerAddress: customerAddress.trim(),
+          customerContactNumber: customerContactNumber.trim(),
+          bills: [],
+          payments: []
         });
       }
 
-      // Deduct stock
-      productInDB.countInStock -= newQuantity;
-      productUpdatePromises.push(productInDB.save({ session }));
+      // Check if the bill with the same invoiceNo already exists in new customer's bills array
+      const existingBillInNewCustomer = customerAccount.bills.find(bill => bill.invoiceNo === invoiceNo.trim());
+      if (existingBillInNewCustomer) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: `Invoice number ${invoiceNo} already exists for the new customer` });
+      }
+
+      // Add the bill to the new CustomerAccount's bills array
+      customerAccount.bills.push({
+        invoiceNo: invoiceNo.trim(),
+        billAmount: parseFloat(billingAmount),
+        invoiceDate: new Date(invoiceDate),
+        deliveryStatus,
+      });
+
+      // Remove the bill from the old CustomerAccount's bills array
+      if (oldCustomerId) {
+        const oldCustomerAccount = await CustomerAccount.findOne({ customerId: oldCustomerId }).session(session);
+        if (oldCustomerAccount) {
+          oldCustomerAccount.bills = oldCustomerAccount.bills.filter(
+            (bill) => bill.invoiceNo !== existingBilling.invoiceNo
+          );
+          await oldCustomerAccount.save({ session });
+        }
+      }
+
+      // Update the billing's customerId and customer details
+      existingBilling.customerId = customerId.trim();
+      existingBilling.customerName = customerName.trim();
+      existingBilling.customerAddress = customerAddress.trim();
+      existingBilling.customerContactNumber = customerContactNumber.trim();
+    } else {
+      // If customer details haven't changed, ensure the billing is linked to the correct CustomerAccount
+      customerAccount = await CustomerAccount.findOne({ customerId: existingBilling.customerId }).session(session);
+
+      if (!customerAccount) {
+        // If the linked CustomerAccount doesn't exist, create it
+        customerAccount = new CustomerAccount({
+          customerId: customerId.trim(),
+          customerName: customerName.trim(),
+          customerAddress: customerAddress.trim(),
+          customerContactNumber: customerContactNumber.trim(),
+          bills: [],
+          payments: []
+        });
+      }
+
+      // Update the CustomerAccount's bills array with the updated billing information
+      let existingBillInAccount = customerAccount.bills.find(
+        (bill) => bill.invoiceNo === existingBilling.invoiceNo
+      );
+
+      if (existingBillInAccount) {
+        existingBillInAccount.billAmount = parseFloat(billingAmount);
+        existingBillInAccount.invoiceDate = new Date(invoiceDate);
+        existingBillInAccount.deliveryStatus = deliveryStatus;
+      } else {
+        // If the bill isn't present, add it
+        customerAccount.bills.push({
+          invoiceNo: invoiceNo.trim(),
+          billAmount: parseFloat(billingAmount),
+          invoiceDate: new Date(invoiceDate),
+          deliveryStatus,
+        });
+      }
     }
 
-    // Add new product to billing
-    existingBilling.products.push({
-      item_id: trimmedItemId,
-      name: name || productInDB.name,
-      sellingPrice: parseFloat(sellingPrice) || 0,
-      quantity: newQuantity,
-      category: category || productInDB.category,
-      brand: brand || productInDB.brand,
-      unit: unit || productInDB.unit,
-      sellingPriceinQty: parseFloat(sellingPriceinQty) || 0,
-      enteredQty: parseFloat(enteredQty) || 0,
-      length: parseFloat(length) || 0,
-      breadth: parseFloat(breadth) || 0,
-      psRatio: parseFloat(psRatio) || 0,
-      size: productInDB.size || size,
-    });
-  }
-}
+    // === 5. Handle Payments ===
 
+    if (paymentAmount && paymentMethod) {
+      const parsedPaymentAmount = parseFloat(paymentAmount);
 
-    // === 4. Handle Payments ===
+      // Validate payment amount
+      if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: 'Invalid payment amount.' });
+      }
 
-// === 4. Handle Payments ===
-if (paymentAmount && paymentMethod) {
-  const parsedPaymentAmount = parseFloat(paymentAmount);
+      // Ensure paymentAmount does not exceed totalAmount after discount
+      const totalAmount = parseFloat(billingAmount) - parseFloat(discount || 0);
+      if (parsedPaymentAmount > totalAmount) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          message: 'Payment amount cannot exceed total amount after discount.',
+        });
+      }
 
-  // Validate payment amount
-  if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
-    await session.abortTransaction();
-    session.endSession();
-    return res.status(400).json({ message: 'Invalid payment amount' });
-  }
+      const currentDate = new Date(paymentReceivedDate || Date.now());
 
-  // Ensure paymentAmount does not exceed totalAmount
-  const totalAmount = parseFloat(billingAmount) - parseFloat(discount || 0);
-  if (parsedPaymentAmount > totalAmount) {
-    await session.abortTransaction();
-    session.endSession();
-    return res.status(400).json({
-      message: 'Payment amount cannot exceed total amount after discount',
-    });
-  }
+      const paymentEntry = {
+        amount: parsedPaymentAmount,
+        method: paymentMethod.trim(),
+        date: currentDate,
+      };
 
-  const currentDate = new Date(paymentReceivedDate || Date.now());
+      // Add the payment to the billing payments array
+      existingBilling.payments.push(paymentEntry);
 
-  const paymentEntry = {
-    amount: parsedPaymentAmount,
-    method: paymentMethod,
-    date: currentDate,
-  };
+      // Also add payment to CustomerAccount's payments array
+      customerAccount.payments.push({
+        amount: parsedPaymentAmount,
+        method: paymentMethod.trim(),
+        remark: `Bill ${invoiceNo.trim()}`,
+        submittedBy: userId,
+        date: currentDate,
+      });
 
-  const accountPaymentEntry = {
-    amount: parsedPaymentAmount,
-    method: paymentMethod,
-    remark: `Bill ${invoiceNo}`,
-    submittedBy: userId,
-  };
+      // Handle PaymentsAccount
+      const account = await PaymentsAccount.findOne({ accountId: paymentMethod.trim() }).session(session);
+      if (!account) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({ message: 'Payment account not found.' });
+      }
 
-  const account = await PaymentsAccount.findOne({ accountId: paymentMethod }).session(session);
-  if (!account) {
-    await session.abortTransaction();
-    session.endSession();
-    return res.status(404).json({ message: 'Payment account not found' });
-  }
+      const accountPaymentEntry = {
+        amount: parsedPaymentAmount,
+        method: paymentMethod.trim(),
+        remark: `Bill ${invoiceNo.trim()}`,
+        submittedBy: userId,
+        date: currentDate,
+      };
 
-  account.paymentsIn.push(accountPaymentEntry);
-  await account.save({ session });
+      account.paymentsIn.push(accountPaymentEntry);
+      await account.save({ session });
+    }
 
-  // Add the payment to the billing payments array
-  existingBilling.payments.push(paymentEntry);
-}
+    // === 6. Update Billing Details ===
 
-    // === 5. Update Billing Details ===
-
-    existingBilling.invoiceNo = invoiceNo;
-    existingBilling.grandTotal = parseFloat(grandTotal) || 0;
+    existingBilling.invoiceNo = invoiceNo.trim();
     existingBilling.invoiceDate = new Date(invoiceDate);
-    existingBilling.salesmanName = salesmanName;
+    existingBilling.salesmanName = salesmanName.trim();
     existingBilling.expectedDeliveryDate = new Date(expectedDeliveryDate);
     existingBilling.billingAmount = parseFloat(billingAmount) || 0;
+    existingBilling.grandTotal = parseFloat(grandTotal) || 0;
     existingBilling.discount = parseFloat(discount) || 0;
     existingBilling.unloading = parseFloat(unloading) || 0;
     existingBilling.transportation = parseFloat(transportation) || 0;
-    existingBilling.remark = remark;
     existingBilling.handlingCharge = parseFloat(handlingcharge) || 0;
-    existingBilling.customerName = customerName;
-    existingBilling.customerAddress = customerAddress;
-    existingBilling.customerContactNumber = customerContactNumber;
-    existingBilling.marketedBy = marketedBy || existingBilling.marketedBy;
+    existingBilling.remark = remark ? remark.trim() : existingBilling.remark;
+    existingBilling.marketedBy = marketedBy ? marketedBy.trim() : existingBilling.marketedBy;
     existingBilling.paymentStatus = paymentStatus || existingBilling.paymentStatus;
     existingBilling.deliveryStatus = deliveryStatus || existingBilling.deliveryStatus;
 
-    // === 6. Update Stock if User is Admin or Bill is Approved ===
+    // === 7. Update Salesman Phone Number ===
+    const salesmanUser = await User.findOne({ name: salesmanName.trim() }).session(session);
+    if (salesmanUser) {
+      salesmanUser.contactNumber = salesmanPhoneNumber.trim();
+      await salesmanUser.save({ session });
+    } else {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: 'Salesman user not found' });
+    }
+
+    // === 8. Update Stock if User is Admin or Bill is Approved ===
     if (isAdmin || isBillApproved) {
       await Promise.all(productUpdatePromises);
     }
 
-    // === 7. Save Updated Billing Record ===
+    // === 9. Save Billing and CustomerAccount ===
     await existingBilling.save({ session });
+    await customerAccount.save({ session });
 
-    // === 8. Commit Transaction ===
+    // === 10. Commit Transaction ===
     await session.commitTransaction();
     session.endSession();
 
-    // === 9. Send Success Response ===
+    // === 11. Send Success Response ===
     res.status(200).json({ message: 'Billing data updated successfully.' });
   } catch (error) {
     // Abort transaction on error
@@ -643,6 +773,7 @@ if (paymentAmount && paymentMethod) {
     });
   }
 });
+
 
 // =========================
 // Route: Approve Billing Entry
@@ -937,34 +1068,160 @@ billingRouter.get("/billing/driver/suggestions", async (req, res) => {
 
 
 
-billingRouter.delete('/billings/delete/:id',async(req,res)=>{
-  try{
-    const billing = await Billing.findById(req.params.id)
+// =========================
+// Route: Delete Billing Entry
+// =========================
+billingRouter.delete('/billings/delete/:id', async (req, res) => {
+  // Start a MongoDB session for transaction
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
+  try {
+    const billingId = req.params.id;
+
+    // -----------------------
+    // 1. Fetch the Billing Record
+    // -----------------------
+    const billing = await Billing.findById(billingId).session(session);
     if (!billing) {
-      return res.status(404).json({ message: 'Purchase not found' });
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: 'Billing record not found.' });
     }
 
-    // Loop through each item in the purchase and update product stock
-    for (let item of billing.products) {
-      const product = await Product.findOne({item_id: item.item_id});
+    const {
+      customerId,
+      invoiceNo,
+      payments, // Array of payment objects
+      products, // Array of product objects
+    } = billing;
 
-      if (product) {
-        // Reduce the countInStock by the quantity in the purchase
-        product.countInStock += parseFloat(item.quantity)
+    // -----------------------
+    // 2. Fetch the Customer Account
+    // -----------------------
+    const customerAccount = await CustomerAccount.findOne({ customerId: customerId.trim() }).session(session);
+    if (!customerAccount) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: 'Customer account not found.' });
+    }
 
-        if (product.countInStock < 0) {
-          product.countInStock = 0; // Ensure stock doesn't go below zero
+    // -----------------------
+    // 3. Remove the Billing from Customer's Bills
+    // -----------------------
+    const billIndex = customerAccount.bills.findIndex(bill => bill.invoiceNo === invoiceNo.trim());
+    if (billIndex !== -1) {
+      customerAccount.bills.splice(billIndex, 1);
+    } else {
+      // Optionally handle if the billing is not found in customer's bills
+      console.warn(`Billing with invoiceNo ${invoiceNo.trim()} not found in customer account.`);
+    }
+
+    // -----------------------
+    // 4. Handle Associated Payments
+    // -----------------------
+    if (payments && payments.length > 0) {
+      for (const payment of payments) {
+        const { amount, method, date, submittedBy } = payment;
+
+        // a. Remove Payment from PaymentsAccount
+        const paymentsAccount = await PaymentsAccount.findOne({ accountId: method.trim() }).session(session);
+        if (paymentsAccount) {
+          // Find the index of the payment to remove
+          const paymentIndex = paymentsAccount.paymentsIn.findIndex(
+            p =>
+              p.amount === amount &&
+              p.method === method.trim() &&
+              p.date.toISOString() === new Date(date).toISOString() &&
+              p.submittedBy.toString() === submittedBy.toString()
+          );
+
+          if (paymentIndex !== -1) {
+            paymentsAccount.paymentsIn.splice(paymentIndex, 1);
+            await paymentsAccount.save({ session });
+          } else {
+            console.warn(`Payment not found in PaymentsAccount for method ${method.trim()}.`);
+          }
+        } else {
+          console.warn(`PaymentsAccount with accountId ${method.trim()} not found.`);
         }
 
-        await product.save();  // Save the updated product
+        // b. Remove Payment from CustomerAccount's Payments
+        const customerPaymentIndex = customerAccount.payments.findIndex(
+          p =>
+            p.amount === amount &&
+            p.method === method.trim() &&
+            p.date.toISOString() === new Date(date).toISOString() &&
+            p.submittedBy.toString() === submittedBy.toString()
+        );
+
+        if (customerPaymentIndex !== -1) {
+          customerAccount.payments.splice(customerPaymentIndex, 1);
+        } else {
+          console.warn(`Payment not found in CustomerAccount for method ${method.trim()}.`);
+        }
       }
     }
 
-    const deleteProduct = await billing.remove();
-    res.send({ message: 'Product Deleted', bill: deleteProduct });
-  }catch(error){
-    res.status(500).send({ message: 'Error Occured' });
+    // -----------------------
+    // 5. Restore Product Stock
+    // -----------------------
+    if (products && products.length > 0) {
+      for (const item of products) {
+        const { item_id, quantity } = item;
+
+        // Validate product details
+        if (!item_id || isNaN(quantity) || quantity <= 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ message: 'Invalid product details in billing.' });
+        }
+
+        // Fetch the product
+        const product = await Product.findOne({ item_id: item_id.trim() }).session(session);
+        if (product) {
+          // Restore the stock
+          product.countInStock += parseFloat(quantity);
+          await product.save({ session });
+        } else {
+          // If product not found, abort the transaction
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(404).json({ message: `Product with ID ${item_id.trim()} not found.` });
+        }
+      }
+    }
+
+    // -----------------------
+    // 6. Remove the Billing Entry
+    // -----------------------
+    await Billing.findByIdAndRemove(billingId).session(session);
+
+    // -----------------------
+    // 7. Save the Updated Customer Account
+    // -----------------------
+    await customerAccount.save({ session });
+
+    // -----------------------
+    // 8. Commit the Transaction
+    // -----------------------
+    await session.commitTransaction();
+    session.endSession();
+
+    // -----------------------
+    // 9. Respond to the Client
+    // -----------------------
+    res.status(200).json({ message: 'Billing record deleted successfully.' });
+  } catch (error) {
+    console.error('Error deleting billing record:', error);
+
+    // Attempt to abort the transaction if it's still active
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
+
+    res.status(500).json({ message: 'Error deleting billing record.', error: error.message });
   }
 });
 
@@ -976,15 +1233,48 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
       .sort({ invoiceNo: -1 })
       .collation({ locale: "en", numericOrdering: true });
 
-    // Check if an invoice was found
-    if (billing) {
-      res.json(billing.invoiceNo);
-    } else {
-      const billing = await Billing.find()
-      .sort({ invoiceNo: -1 })
-      .collation({ locale: "en", numericOrdering: true });
+      let lastGeneratedCustomer;
+
+      if(billing){
+
+      lastGeneratedCustomer = await Billing.aggregate([
+        {
+          $addFields: {
+            numericId: {
+              $toInt: {
+                $cond: {
+                  if: { $regexMatch: { input: "$customerId", regex: /^CUS\d+$/ } }, // Check if format matches
+                  then: { $substr: ["$customerId", 4, -1] }, // Extract numeric part
+                  else: "0" // Default to 0 for invalid or missing customerId
+                }
+              }
+            }
+          }
+        },
+        {
+          $sort: { numericId: -1 } // Sort by numericId in descending order
+        },
+        {
+          $limit: 1 // Get the record with the highest numericId
+        }
+      ]);
     }
+      
+
+      let lastInvoice = 'KK0'
+      let lastCustomerId = 'CUS0'
+
+      if(billing){
+        lastInvoice = billing.invoiceNo
+      }
+
+      if(lastGeneratedCustomer){
+        lastCustomerId = lastGeneratedCustomer[0].customerId
+      }
+    
+      res.json({lastInvoice, lastCustomerId});
   } catch (error) {
+    console.log(error)
     res.status(500).json({ message: 'Error fetching last order' });
   }
 });
@@ -1114,12 +1404,26 @@ billingRouter.get('/purchases/suggestions', async (req, res) => {
       return res.status(400).json({ error: 'Query parameter q is required' });
     }
 
-    // Find sellers whose names match the search term (case-insensitive)
-    const sellers = await Purchase.find({
-      sellerName: { $regex: searchTerm, $options: 'i' }
-    })
-      .select('sellerName sellerAddress sellerGst sellerId') // Select only required fields
-      .limit(10); // Limit to 10 suggestions for performance
+    // Use aggregation to group by sellerId and ensure uniqueness
+    const sellers = await Purchase.aggregate([
+      {
+        $match: {
+          sellerName: { $regex: searchTerm, $options: 'i' }
+        }
+      },
+      {
+        $group: {
+          _id: '$sellerId',
+          sellerName: { $first: '$sellerName' },
+          sellerAddress: { $first: '$sellerAddress' },
+          sellerGst: { $first: '$sellerGst' },
+          sellerId: { $first: '$sellerId' }
+        }
+      },
+      {
+        $limit: 10 // Limit to 10 unique suggestions for performance
+      }
+    ]);
 
     const suggestions = sellers.map(seller => ({
       sellerName: seller.sellerName,
@@ -1134,6 +1438,7 @@ billingRouter.get('/purchases/suggestions', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 
 
 billingRouter.get('/purchases/categories', async (req, res) => {
@@ -1337,7 +1642,8 @@ billingRouter.get('/customer/suggestions', async (req, res) => {
           _id: {
             customerName: "$customerName",
             customerContactNumber: "$customerContactNumber",
-            customerAddress: "$customerAddress"
+            customerAddress: "$customerAddress",
+            customerId: "$customerId"
           },
           doc: { $first: "$$ROOT" }
         }
@@ -1350,7 +1656,8 @@ billingRouter.get('/customer/suggestions', async (req, res) => {
           _id: 1,
           customerName: 1,
           customerContactNumber: 1,
-          customerAddress: 1
+          customerAddress: 1,
+          customerId: 1,
         }
       },
       {
@@ -1362,6 +1669,89 @@ billingRouter.get('/customer/suggestions', async (req, res) => {
   } catch (error) {
     console.error('Error fetching customer suggestions:', error);
     res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+billingRouter.get('/sort/sales-report', async (req, res) => {
+  try {
+    const {
+      fromDate,
+      toDate,
+      customerName,
+      salesmanName,
+      invoiceNo,
+      paymentStatus,
+      deliveryStatus,
+      itemName,
+      amountThreshold,
+      sortField,
+      sortDirection,
+    } = req.query;
+
+    let filter = {};
+
+    // Filter by date range
+    if (fromDate || toDate) {
+      filter.invoiceDate = {};
+      if (fromDate) {
+        filter.invoiceDate.$gte = new Date(fromDate);
+      }
+      if (toDate) {
+        filter.invoiceDate.$lte = new Date(toDate);
+      }
+    }
+
+    // Filter by customer name
+    if (customerName) {
+      filter.customerName = { $regex: customerName, $options: 'i' };
+    }
+
+    // Filter by salesman name
+    if (salesmanName) {
+      filter.salesmanName = { $regex: salesmanName, $options: 'i' };
+    }
+
+    // Filter by invoice number
+    if (invoiceNo) {
+      filter.invoiceNo = { $regex: invoiceNo, $options: 'i' };
+    }
+
+    // Filter by payment status
+    if (paymentStatus) {
+      filter.paymentStatus = paymentStatus;
+    }
+
+    // Filter by delivery status
+    if (deliveryStatus) {
+      filter.deliveryStatus = deliveryStatus;
+    }
+
+    // Filter by item name
+    if (itemName) {
+      filter['products.name'] = { $regex: itemName, $options: 'i' };
+    }
+
+    // Filter by amount threshold
+    if (amountThreshold) {
+      filter.billingAmount = { $gte: parseFloat(amountThreshold) };
+    }
+
+    // Sorting
+    let sort = {};
+    if (sortField) {
+      sort[sortField] = sortDirection === 'asc' ? 1 : -1;
+    } else {
+      sort = { invoiceDate: -1 }; // Default sorting
+    }
+
+    // Fetch billings with filters and sorting
+    const billings = await Billing.find(filter).sort(sort);
+
+    res.json(billings);
+  } catch (error) {
+    console.error('Error fetching billings:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

@@ -24,6 +24,8 @@ import accountRouter from './routers/accountPaymentsRouter.js';
 import sellerPaymentsRouter from './routers/sellerPaymentsRouter.js';
 import transportPaymentsRouter from './routers/transportPaymentsRouter.js';
 import siteReportRouter from './routers/siteReportRouter.js';
+import customerRouter from './routers/customerRouter.js';
+import supplierRouter from './routers/supplierRouter.js';
 
 
 dotenv.config();
@@ -51,6 +53,9 @@ app.use('/api/accounts',accountRouter);
 app.use('/api/sellerPayments',sellerPaymentsRouter);
 app.use('/api/transportpayments', transportPaymentsRouter);
 app.use('/api/site-report', siteReportRouter);
+app.use('/api/customer', customerRouter);
+app.use('/api/seller', supplierRouter);
+
 
 
 app.get('/api/config/paypal', (req, res) => {

@@ -152,6 +152,73 @@ purchaseRouter.get('/purchaseinfo', async (req, res) => {
 });
 
 
+purchaseRouter.get('/sort/purchase-report', async (req, res) => {
+  try {
+    const {
+      fromDate,
+      toDate,
+      sellerName,
+      invoiceNo,
+      itemName,
+      amountThreshold,
+      sortField,
+      sortDirection,
+    } = req.query;
+
+    let filter = {};
+
+    // Filter by date range
+    if (fromDate || toDate) {
+      filter.invoiceDate = {};
+      if (fromDate) {
+        filter.invoiceDate.$gte = new Date(fromDate);
+      }
+      if (toDate) {
+        filter.invoiceDate.$lte = new Date(toDate);
+      }
+    }
+
+    // Filter by seller name
+    if (sellerName) {
+      filter.sellerName = { $regex: sellerName, $options: 'i' };
+    }
+
+    // Filter by invoice number
+    if (invoiceNo) {
+      filter.invoiceNo = { $regex: invoiceNo, $options: 'i' };
+    }
+
+    // Filter by item name
+    if (itemName) {
+      filter['items.name'] = { $regex: itemName, $options: 'i' };
+    }
+
+    // Filter by amount threshold
+    if (amountThreshold) {
+      filter['totals.totalPurchaseAmount'] = {
+        $gte: parseFloat(amountThreshold),
+      };
+    }
+
+    // Sorting
+    let sort = {};
+    if (sortField) {
+      sort[sortField] = sortDirection === 'asc' ? 1 : -1;
+    } else {
+      sort = { invoiceDate: -1 }; // Default sorting
+    }
+
+    // Fetch purchases with filters and sorting
+    const purchases = await Purchase.find(filter).sort(sort);
+
+    res.json(purchases);
+  } catch (error) {
+    console.error('Error fetching purchases:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
 
 
 export default purchaseRouter;

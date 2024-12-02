@@ -16,6 +16,7 @@ const BillingSchema = new mongoose.Schema(
     discount: { type: Number, default: 0 },
     billingAmountReceived: { type: Number, default: 0 },
     paymentStatus: { type: String, required: true, default: "Unpaid" },
+    customerId: { type: String, required: true},
     customerName: { type: String, required: true },
     customerAddress: { type: String, required: true },
     customerContactNumber: { type: String },
