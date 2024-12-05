@@ -852,7 +852,9 @@ billingRouter.delete('/billings/delete/:id', async (req, res) => {
     const billingId = req.params.id;
 
     // === 1. Authenticate and Authorize User ===
-    const { userId } = req.body; // Ensure userId is sent in the request body
+    const { userId } = req.query;
+
+    // Ensure userId is sent in the request body
     if (!userId) {
       await session.abortTransaction();
       session.endSession();
@@ -1000,7 +1002,6 @@ billingRouter.delete('/billings/delete/:id', async (req, res) => {
       await session.abortTransaction();
     }
     session.endSession();
-
     res.status(500).json({
       message: 'Error deleting billing record.',
       error: error.message,
