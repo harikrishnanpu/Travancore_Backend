@@ -18,6 +18,10 @@ const billSchema = new mongoose.Schema({
     required: true,
     default: Date.now,
   },
+  deliveryStatus: {
+    type: String,
+    default: "Pending",
+  },
 });
 
 // Sub-schema for payments
@@ -37,10 +41,22 @@ const paymentSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  referenceId: {
+    type: String,
+    required: true,
+    trim: true,
+  },
   remark: {
     type: String,
     trim: true,
   },
+  // Linking Payment to Billing
+  invoiceNo: {
+    type: String,
+    required: true,
+    trim: true,
+  },
+  method: {type: String, required: true}
 });
 
 // Main CustomerAccount schema
@@ -51,8 +67,11 @@ const customerAccountSchema = new mongoose.Schema(
       unique: true,
       required: true,
       default: function () {
-        // Generate a unique customer (e.g., "CUS12345")
-        return 'CUS' + Math.random().toString(36).substr(2, 9).toUpperCase();
+        // Generate a unique customer account ID (e.g., "CUS12345")
+        return (
+          "CUS" +
+          Math.random().toString(36).substr(2, 9).toUpperCase()
+        );
       },
     },
     customerId: {
@@ -98,7 +117,7 @@ const customerAccountSchema = new mongoose.Schema(
 );
 
 // Middleware to calculate totalBillAmount, paidAmount, and pendingAmount before saving
-customerAccountSchema.pre('save', async function (next) {
+customerAccountSchema.pre("save", async function (next) {
   try {
     // === 1. Calculate Total Amounts ===
     this.totalBillAmount = this.bills.reduce(
@@ -116,23 +135,21 @@ customerAccountSchema.pre('save', async function (next) {
     }
 
     // === 2. Check for Duplicate Invoice Numbers within the Customer ===
-    if (this.isModified('bills')) {
+    if (this.isModified("bills")) {
       const invoiceNos = this.bills.map((bill) => bill.invoiceNo);
       const uniqueInvoiceNos = new Set();
 
       for (const invoiceNo of invoiceNos) {
         if (uniqueInvoiceNos.has(invoiceNo)) {
           return next(
-            new Error(`Duplicate invoice number ${invoiceNo} in customer's bills`)
+            new Error(
+              `Duplicate invoice number ${invoiceNo} in customer's bills`
+            )
           );
         }
         uniqueInvoiceNos.add(invoiceNo);
       }
     }
-
-    // Note: Enforcing uniqueness of invoice numbers across all customers should be handled
-    // at the Billing model level, where 'invoiceNo' is unique. Modifying other documents
-    // in pre-save middleware can lead to race conditions and is not recommended.
 
     next();
   } catch (error) {
@@ -140,5 +157,8 @@ customerAccountSchema.pre('save', async function (next) {
   }
 });
 
-const CustomerAccount = mongoose.model('CustomerAccount', customerAccountSchema);
+const CustomerAccount = mongoose.model(
+  "CustomerAccount",
+  customerAccountSchema
+);
 export default CustomerAccount;

@@ -55,6 +55,8 @@ app.use('/api/transportpayments', transportPaymentsRouter);
 app.use('/api/site-report', siteReportRouter);
 app.use('/api/customer', customerRouter);
 app.use('/api/seller', supplierRouter);
+app.use('/api/transport-payments', transportPaymentsRouter);
+
 
 
 

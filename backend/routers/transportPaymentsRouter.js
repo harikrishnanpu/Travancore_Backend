@@ -20,6 +20,20 @@ transportPaymentsRouter.get('/suggestions', async (req, res) => {
 });
 
 // Get transport details by ID
+transportPaymentsRouter.get('/get/:id', async (req, res) => {
+  try {
+    const transport = await TransportPayment.findById(req.params.id);
+    if (!transport) {
+      return res.status(404).json({ message: 'Transport not found' });
+    }
+    res.json(transport);
+  } catch (error) {
+    console.error('Error fetching transport details:', error);
+    res.status(500).json({ message: 'Error fetching transport details' });
+  }
+});
+
+
 transportPaymentsRouter.get('/get-transport/:id', async (req, res) => {
   try {
     const transport = await TransportPayment.findById(req.params.id);
@@ -35,6 +49,7 @@ transportPaymentsRouter.get('/get-transport/:id', async (req, res) => {
 
 // Add a payment to a transport
 transportPaymentsRouter.post('/add-payments/:id', async (req, res) => {
+  const paymentReferenceId = 'PAY' + Date.now().toString();
   try {
     const transport = await TransportPayment.findById(req.params.id);
     if (!transport) {
@@ -52,6 +67,7 @@ transportPaymentsRouter.post('/add-payments/:id', async (req, res) => {
       method,
       date,
       remark,
+      referenceId: paymentReferenceId,
       submittedBy: req.user ? req.user.name : 'Unknown', // Assuming you have user authentication
     };
 
@@ -60,6 +76,7 @@ transportPaymentsRouter.post('/add-payments/:id', async (req, res) => {
       amount: amount,
       method: method,
       remark: `Transportation Payment to ${transportName} - ${transportId}`,
+      referenceId: paymentReferenceId,
       submittedBy: req.body.userId,
     };
   
@@ -163,6 +180,69 @@ transportPaymentsRouter.get('/daily/payments', async (req, res) => {
     res.status(500).json({ message: 'Error fetching transport payments' });
   }
 });
+
+
+// Get All Transport Payments
+transportPaymentsRouter.get('/all', async (req, res) => {
+  try {
+    const payments = await TransportPayment.find({});
+    res.json(payments);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+
+
+// Update Transport Payment
+transportPaymentsRouter.put('/:id/update', async (req, res) => {
+  try {
+    const payment = await TransportPayment.findById(req.params.id);
+    if (payment) {
+      payment.transportName = req.body.transportName || payment.transportName;
+      payment.transportType = req.body.transportType || payment.transportType;
+      payment.billings = req.body.billings || payment.billings;
+      payment.payments = req.body.payments || payment.payments;
+      // totalAmountBilled, totalAmountPaid, paymentRemaining will be recalculated by pre-save middleware
+
+      const updatedPayment = await payment.save();
+      res.json(updatedPayment);
+    } else {
+      res.status(404).json({ message: 'Transport payment not found.' });
+    }
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Delete Transport Payment
+transportPaymentsRouter.delete('/:id/delete', async (req, res) => {
+  try {
+    const payment = await TransportPayment.findById(req.params.id);
+    if (payment) {
+      await payment.remove();
+      res.json({ message: 'Transport payment record deleted successfully.' });
+    } else {
+      res.status(404).json({ message: 'Transport payment not found.' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+
+transportPaymentsRouter.post('/create', async (req, res) => {
+  try {
+    const transportPayment = new TransportPayment(req.body);
+    const createdPayment = await transportPayment.save();
+    res.status(201).json(createdPayment);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 
 
 

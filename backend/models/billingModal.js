@@ -4,19 +4,20 @@ import mongoose from "mongoose";
 const BillingSchema = new mongoose.Schema(
   {
     invoiceNo: { type: String, required: true, unique: true },
-    isApproved: { type: Boolean, default: false},
-    approvedBy: { type: String},
+    isApproved: { type: Boolean, default: false },
+    approvedBy: { type: String },
     submittedBy: { type: String },
     invoiceDate: { type: Date, required: true },
     salesmanName: { type: String, required: true },
+    salesmanPhoneNumber: { type: String },
     expectedDeliveryDate: { type: Date, required: true },
     deliveryStatus: { type: String, default: "Pending" },
-    grandTotal: {type: Number, required: true},
+    grandTotal: { type: Number, required: true },
     billingAmount: { type: Number, required: true }, // Total before discount
     discount: { type: Number, default: 0 },
     billingAmountReceived: { type: Number, default: 0 },
     paymentStatus: { type: String, required: true, default: "Unpaid" },
-    customerId: { type: String, required: true},
+    customerId: { type: String, required: true },
     customerName: { type: String, required: true },
     customerAddress: { type: String, required: true },
     customerContactNumber: { type: String },
@@ -25,10 +26,10 @@ const BillingSchema = new mongoose.Schema(
     endKm: { type: Number, default: 0 },
     fuelCharge: { type: Number, default: 0 },
     marketedBy: { type: String },
-    unloading: {type: Number, default: 0},
-    transportation: { type: Number, default: 0},
-    handlingCharge: {type: Number, default: 0},
-    remark: {type: String, default: 0},
+    unloading: { type: Number, default: 0 },
+    transportation: { type: Number, default: 0 },
+    handlingCharge: { type: Number, default: 0 },
+    remark: { type: String, default: "" },
     otherExpenses: [
       {
         amount: { type: Number },
@@ -59,8 +60,10 @@ const BillingSchema = new mongoose.Schema(
       {
         amount: { type: Number, required: true },
         method: { type: String, required: true },
+        referenceId: { type: String, required: true },
         date: { type: Date, default: Date.now },
-        remark: { type: String }
+        remark: { type: String },
+        invoiceNo: { type: String, required: true },
       },
     ],
     deliveryIds: [String], // Keep track of all delivery IDs related to this billing
@@ -85,7 +88,7 @@ const BillingSchema = new mongoose.Schema(
           {
             item_id: String,
             deliveredQuantity: Number,
-            psRatio: String
+            psRatio: String,
           },
         ],
         deliveryStatus: String,
@@ -108,13 +111,13 @@ const BillingSchema = new mongoose.Schema(
 );
 
 // Method to add a new payment and update billingAmountReceived and payment status
-BillingSchema.methods.addPayment = async function (amount, method) {
-  if (amount <= 0) {
+BillingSchema.methods.addPayment = async function (payment) {
+  if (payment.amount <= 0) {
     throw new Error("Payment amount must be greater than zero.");
   }
 
   // Add the new payment
-  this.payments.push({ amount: parseFloat(amount), method });
+  this.payments.push(payment);
 
   // Recalculate the total payments received
   this.billingAmountReceived = this.payments.reduce(
@@ -123,7 +126,7 @@ BillingSchema.methods.addPayment = async function (amount, method) {
   );
 
   // Calculate net amount after discount
-  const netAmount = this.billingAmount - (this.discount || 0);
+  const netAmount = this.grandTotal || 0;
 
   // Update the payment status based on the total amount received vs net amount
   if (this.billingAmountReceived >= netAmount) {
@@ -185,9 +188,13 @@ BillingSchema.pre("save", function (next) {
 // Method to update delivery status based on product delivery quantities
 BillingSchema.methods.updateDeliveryStatus = function () {
   // Determine overall delivery status based on product delivery statuses
-  const allDelivered = this.products.every((product) => product.deliveryStatus === "Delivered");
+  const allDelivered = this.products.every(
+    (product) => product.deliveryStatus === "Delivered"
+  );
   const anyDelivered = this.products.some(
-    (product) => product.deliveryStatus === "Delivered" || product.deliveryStatus === "Partially Delivered"
+    (product) =>
+      product.deliveryStatus === "Delivered" ||
+      product.deliveryStatus === "Partially Delivered"
   );
 
   if (allDelivered) {

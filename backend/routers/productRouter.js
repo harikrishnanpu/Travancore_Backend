@@ -15,24 +15,39 @@ import Transportation from '../models/transportModal.js';
 
 const productRouter = express.Router();
 
-productRouter.get(
-  '/',
+productRouter.get('/',
   expressAsyncHandler(async (req, res) => {
     const pageSize = 20;
     const page = Number(req.query.pageNumber) || 1;
     const name = req.query.name ? req.query.name.toUpperCase() : '';
     const category = req.query.category ? req.query.category.toUpperCase() : '';
-    const seller = req.query.seller ? req.query.seller.toUpperCase() : '';
-    const order = req.query.order ? req.query.order.toUpperCase() : '';
+    const brand = req.query.brand ? req.query.brand.toUpperCase() : '';
+    const size = req.query.size ? req.query.size.toUpperCase() : '';
+    const order = req.query.order ? req.query.order.toLowerCase() : '';
     const min = req.query.min && Number(req.query.min) !== 0 ? Number(req.query.min) : 0;
     const max = req.query.max && Number(req.query.max) !== 0 ? Number(req.query.max) : 0;
     const rating = req.query.rating && Number(req.query.rating) !== 0 ? Number(req.query.rating) : 0;
+    const inStock = req.query.inStock;
+    const countInStockMin = req.query.countInStockMin
+      ? Number(req.query.countInStockMin)
+      : 0;
 
-    const nameFilter = name ? { name: { $regex: name, $options: 'i' } } : {};
-    const categoryFilter = category ? { category } : {};
-    const sellerFilter = seller ? { seller } : {};
-    const priceFilter = min && max ? { price: { $gte: min, $lte: max } } : {};
+    const nameFilter = name && name !== 'ALL' ? { name: { $regex: name, $options: 'i' } } : {};
+    const categoryFilter = category && category !== 'ALL' ? { category } : {};
+    const brandFilter = brand && brand !== 'ALL' ? { brand } : {};
+    const sizeFilter = size && size !== 'ALL' ? { size } : {};
+    const priceFilter =
+      min !== 0 || max !== 0
+        ? { price: { ...(min !== 0 ? { $gte: min } : {}), ...(max !== 0 ? { $lte: max } : {}) } }
+        : {};
     const ratingFilter = rating ? { rating: { $gte: rating } } : {};
+    const inStockFilter =
+      inStock === 'true'
+        ? { countInStock: { $gt: 0 } }
+        : {};
+    const countInStockMinFilter =
+      countInStockMin > 0 ? { countInStock: { $gte: countInStockMin } } : {};
+
     const sortOrder =
       order === 'lowest'
         ? { price: 1 }
@@ -40,51 +55,72 @@ productRouter.get(
         ? { price: -1 }
         : order === 'toprated'
         ? { rating: -1 }
+        : order === 'countinstock'
+        ? { countInStock: -1 }
         : { _id: -1 };
 
     try {
-      let products;
-      let count = 0;
+      const totalProducts = await Product.countDocuments({
+        ...nameFilter,
+        ...categoryFilter,
+        ...brandFilter,
+        ...sizeFilter,
+        ...priceFilter,
+        ...ratingFilter,
+        ...inStockFilter,
+        ...countInStockMinFilter,
+      });
 
-      // Check if name is a valid item_id
-      if (name) {
-        const itemById = await Product.findOne({ item_id: name });
-        if (itemById) {
-          products = [itemById];
-          count = 1;
-        }
-      }
+      const products = await Product.find({
+        ...nameFilter,
+        ...categoryFilter,
+        ...brandFilter,
+        ...sizeFilter,
+        ...priceFilter,
+        ...ratingFilter,
+        ...inStockFilter,
+        ...countInStockMinFilter,
+      })
+        .sort(sortOrder)
+        .skip(pageSize * (page - 1))
+        .limit(pageSize);
 
-      // If name is not an item_id, use regular filters
-      if (!products) {
-        count = await Product.countDocuments({
-          ...sellerFilter,
-          ...nameFilter,
-          ...categoryFilter,
-          ...priceFilter,
-          ...ratingFilter,
-        });
-
-        products = await Product.find({
-          ...sellerFilter,
-          ...nameFilter,
-          ...categoryFilter,
-          ...priceFilter,
-          ...ratingFilter,
-        })
-          .populate('seller', 'seller.name seller.logo')
-          .sort(sortOrder)
-          .skip(pageSize * (page - 1))
-          .limit(pageSize);
-      }
-
-      res.send({ products, page, totalProducts: count, pages: Math.ceil(count / pageSize) });
+      res.send({
+        products,
+        page,
+        totalProducts,
+        pages: Math.ceil(totalProducts / pageSize),
+      });
     } catch (error) {
       res.status(500).send({ message: error.message });
     }
   })
 );
 
+// Additional routes to get categories, brands, and sizes
+productRouter.get(
+  '/categories',
+  expressAsyncHandler(async (req, res) => {
+    const categories = await Product.find().distinct('category');
+    res.send(categories);
+  })
+);
+
+productRouter.get(
+  '/brands',
+  expressAsyncHandler(async (req, res) => {
+    const brands = await Product.find().distinct('brand');
+    res.send(brands);
+  })
+);
+
+productRouter.get(
+  '/sizes',
+  expressAsyncHandler(async (req, res) => {
+    const sizes = await Product.find().distinct('size');
+    res.send(sizes);
+  })
+);
 
 
 productRouter.get('/searchform/search', async (req, res) => {
@@ -205,13 +241,7 @@ productRouter.get('/admin/categories', async (req, res) => {
 });
 
 
-productRouter.get(
-  '/categories',
-  expressAsyncHandler(async (req, res) => {
-    const categories = await Product.find().distinct('category');
-    res.send(categories);
-  })
-);
+
 
 
 
@@ -401,87 +431,80 @@ productRouter.post(
 productRouter.post(
   '/purchase',
   asyncHandler(async (req, res) => {
-    const {
-      sellerId,
-      sellerName,
-      items,
-      invoiceNo,
-      sellerAddress,
-      sellerGst,
-      billingDate,
-      invoiceDate,
-      totals,
-      transportationDetails,
-    } = req.body;
-
-    let { purchaseId } = req.body;
-
-    // **1. Check if Purchase with the same invoiceNo or purchaseId already exists**
-
     try {
-      const existingPurchase = await Purchase.findOne({
+      const {
+        sellerId,
+        sellerName,
+        items,
+        invoiceNo,
+        sellerAddress,
+        sellerGst,
+        billingDate,
+        invoiceDate,
+        totals,
+        transportationDetails,
+      } = req.body;
+
+      let { purchaseId } = req.body;
+
+      // 1. Check if Purchase with the same invoiceNo or purchaseId already exists
+      let existingPurchase = await Purchase.findOne({
         $or: [{ invoiceNo }, { purchaseId }],
       });
 
-      if (existingPurchase) {
-        // Find the latest purchaseId that starts with 'KP' and is followed by digits
-        const latestInvoice = await Purchase.findOne({ purchaseId: /^KP\d+$/ })
+      // Generate new purchaseId if it already exists or not provided
+      if (existingPurchase || !purchaseId) {
+        const latestPurchase = await Purchase.findOne({ purchaseId: /^KP\d+$/ })
           .sort({ purchaseId: -1 })
           .collation({ locale: 'en', numericOrdering: true });
 
-        if (!latestInvoice) {
-          // If no invoice exists, start with 'KP1'
+        if (!latestPurchase) {
           purchaseId = 'KP1';
         } else {
-          const latestInvoiceNo = latestInvoice.purchaseId;
-          const numberPart = parseInt(latestInvoiceNo.replace('KP', ''), 10);
-          const nextNumber = numberPart + 1;
-          purchaseId = `KP${nextNumber}`;
+          const latestNumber = parseInt(latestPurchase.purchaseId.replace('KP', ''), 10);
+          purchaseId = `KP${latestNumber + 1}`;
         }
       }
 
-      // Handle product updates or creation
+      // 2. Adjust product stock and update or create products
       for (const item of items) {
-        const existingProduct = await Product.findOne({ item_id: item.itemId });
+        const product = await Product.findOne({ item_id: item.itemId });
+        const quantityInNumbers = parseFloat(item.quantityInNumbers);
 
-        // Adjust stock based on quantityInNumbers
-        const quantityInNumbers = parseFloat(item.quantityInNumbers).toFixed(2);
-
-        if (existingProduct) {
-          existingProduct.countInStock += quantityInNumbers;
-          existingProduct.price = parseFloat(item.totalPriceInNumbers).toFixed(2);
-          Object.assign(existingProduct, item); // Update product fields
-          await existingProduct.save();
+        if (product) {
+          product.countInStock += quantityInNumbers;
+          product.price = parseFloat(item.totalPriceInNumbers);
+          Object.assign(product, item);
+          await product.save();
         } else {
           const newProduct = new Product({
             item_id: item.itemId,
             ...item,
             countInStock: quantityInNumbers,
-            price: parseFloat(item.totalPriceInNumbers).toFixed(2),
+            price: parseFloat(item.totalPriceInNumbers),
           });
           await newProduct.save();
         }
       }
 
-      // Save purchase details
+      // 3. Save purchase details
       const purchase = new Purchase({
         sellerId,
         sellerName,
         invoiceNo,
-        items: items.map((item) => ({
-          ...item,
-        })),
+        items: items.map((item) => ({ ...item })),
         purchaseId,
         sellerAddress,
         sellerGst,
         billingDate,
         invoiceDate,
         totals,
+        transportationDetails,
       });
 
       await purchase.save();
 
-      // Save transportation details
+      // 4. Save transportation details and update TransportPayment
       if (transportationDetails) {
         const { logistic, local, other } = transportationDetails;
 
@@ -492,15 +515,13 @@ productRouter.post(
           logistic.transportationCharges !== undefined
         ) {
           const logisticTransport = new Transportation({
-            purchaseId: logistic.purchaseId,
-            invoiceNo: logistic.invoiceNo,
+            purchaseId,
+            invoiceNo: logistic.invoiceNo || invoiceNo,
             transportType: 'logistic',
             companyGst: logistic.companyGst,
             billId: logistic.billId,
             transportCompanyName: logistic.transportCompanyName,
-            transportationCharges: parseFloat(
-              logistic.transportationCharges
-            ),
+            transportationCharges: parseFloat(logistic.transportationCharges),
             remarks: logistic.remark,
           });
 
@@ -511,10 +532,9 @@ productRouter.post(
             amount: parseFloat(logistic.transportationCharges),
             date: logistic.billingDate || Date.now(),
             billId: logistic.billId,
-            invoiceNo: logistic.invoiceNo,
+            invoiceNo: logistic.invoiceNo || invoiceNo,
           };
 
-          // Find existing TransportPayment
           let logisticTransportPayment = await TransportPayment.findOne({
             transportName: logistic.transportCompanyName,
             transportType: 'logistic',
@@ -522,38 +542,36 @@ productRouter.post(
 
           if (logisticTransportPayment) {
             logisticTransportPayment.billings.push(logisticBillingEntry);
-            logisticTransportPayment.totalAmountBilled = logisticTransportPayment.billings.reduce(
-              (sum, billing) => sum + billing.amount,
-              0
-            );
-            logisticTransportPayment.paymentRemaining =
-              logisticTransportPayment.totalAmountBilled -
-              logisticTransportPayment.totalAmountPaid;
-            await logisticTransportPayment.save();
           } else {
-            const newLogisticTransportPayment = new TransportPayment({
+            logisticTransportPayment = new TransportPayment({
               transportName: logistic.transportCompanyName,
               transportType: 'logistic',
               payments: [],
               billings: [logisticBillingEntry],
-              totalAmountBilled: parseFloat(logistic.transportationCharges),
-              totalAmountPaid: 0,
-              paymentRemaining: parseFloat(logistic.transportationCharges),
             });
-
-            await newLogisticTransportPayment.save();
           }
+
+          logisticTransportPayment.totalAmountBilled = logisticTransportPayment.billings.reduce(
+            (sum, billing) => sum + billing.amount,
+            0
+          );
+          logisticTransportPayment.paymentRemaining =
+            logisticTransportPayment.totalAmountBilled - logisticTransportPayment.totalAmountPaid;
+          await logisticTransportPayment.save();
         }
 
-        // Local Transportation
+        // Local Transportation (similar logic)
+        // Add code for local transportation if needed
+
+
         if (
           local &&
           local.transportCompanyName &&
           local.transportationCharges !== undefined
         ) {
           const localTransport = new Transportation({
-            purchaseId: local.purchaseId,
-            invoiceNo: local.invoiceNo,
+            purchaseId,
+            invoiceNo: local.invoiceNo || invoiceNo,
             transportType: 'local',
             companyGst: local.companyGst,
             billId: local.billId,
@@ -569,10 +587,9 @@ productRouter.post(
             amount: parseFloat(local.transportationCharges),
             date: local.billingDate || Date.now(),
             billId: local.billId,
-            invoiceNo: local.invoiceNo,
+            invoiceNo: local.invoiceNo || invoiceNo,
           };
 
-          // Find existing TransportPayment
           let localTransportPayment = await TransportPayment.findOne({
             transportName: local.transportCompanyName,
             transportType: 'local',
@@ -580,91 +597,65 @@ productRouter.post(
 
           if (localTransportPayment) {
             localTransportPayment.billings.push(localBillingEntry);
-            localTransportPayment.totalAmountBilled = localTransportPayment.billings.reduce(
-              (sum, billing) => sum + billing.amount,
-              0
-            );
-            localTransportPayment.paymentRemaining =
-              localTransportPayment.totalAmountBilled -
-              localTransportPayment.totalAmountPaid;
-            await localTransportPayment.save();
           } else {
-            const newLocalTransportPayment = new TransportPayment({
+            localTransportPayment = new TransportPayment({
               transportName: local.transportCompanyName,
               transportType: 'local',
               payments: [],
               billings: [localBillingEntry],
-              totalAmountBilled: parseFloat(local.transportationCharges),
-              totalAmountPaid: 0,
-              paymentRemaining: parseFloat(local.transportationCharges),
             });
-
-            await newLocalTransportPayment.save();
           }
+
+          localTransportPayment.totalAmountBilled = localTransportPayment.billings.reduce(
+            (sum, billing) => sum + billing.amount,
+            0
+          );
+          localTransportPayment.paymentRemaining =
+          localTransportPayment.totalAmountBilled - localTransportPayment.totalAmountPaid;
+          await localTransportPayment.save();
         }
       }
 
-      // Add billing to SellerPayment
-      const sellerPayment = await SellerPayment.findOne({ sellerId });
+      // 5. Update or create SellerPayment
+      let sellerPayment = await SellerPayment.findOne({ sellerId });
 
       const billingEntry = {
         amount: totals.totalPurchaseAmount,
         date: billingDate || Date.now(),
-        purchaseId: purchaseId,
-        invoiceNo: invoiceNo,
+        purchaseId,
+        invoiceNo,
       };
 
       if (sellerPayment) {
         sellerPayment.billings.push(billingEntry);
-        sellerPayment.totalAmountBilled = sellerPayment.billings.reduce(
-          (sum, billing) => sum + billing.amount,
-          0
-        );
-        sellerPayment.paymentRemaining =
-          sellerPayment.totalAmountBilled - sellerPayment.totalAmountPaid;
-        await sellerPayment.save();
       } else {
-        const newSellerPayment = new SellerPayment({
+        sellerPayment = new SellerPayment({
           sellerId,
           sellerName,
           payments: [],
           billings: [billingEntry],
-          totalAmountBilled: totals.totalPurchaseAmount,
-          totalAmountPaid: 0,
-          paymentRemaining: totals.totalPurchaseAmount,
         });
-
-        await newSellerPayment.save();
       }
 
-      // === Update SupplierAccount ===
+      sellerPayment.totalAmountBilled = sellerPayment.billings.reduce(
+        (sum, billing) => sum + billing.amount,
+        0
+      );
+      sellerPayment.paymentRemaining =
+        sellerPayment.totalAmountBilled - sellerPayment.totalAmountPaid;
+      await sellerPayment.save();
+
+      // 6. Update or create SupplierAccount
       let supplierAccount = await SupplierAccount.findOne({ sellerId });
 
       const billEntry = {
-        invoiceNo: invoiceNo,
+        invoiceNo,
         billAmount: totals.totalPurchaseAmount,
         invoiceDate: invoiceDate || Date.now(),
       };
 
       if (supplierAccount) {
-        const existingBillIndex = supplierAccount.bills.findIndex(
-          (bill) => bill.invoiceNo === invoiceNo
-        );
-
-        if (existingBillIndex === -1) {
-          supplierAccount.bills.push(billEntry);
-        } else {
-          supplierAccount.bills[existingBillIndex] = billEntry;
-        }
-
-        supplierAccount.totalBillAmount = supplierAccount.bills.reduce(
-          (sum, bill) => sum + bill.billAmount,
-          0
-        );
-        supplierAccount.pendingAmount =
-          supplierAccount.totalBillAmount - supplierAccount.paidAmount;
-
-        await supplierAccount.save();
+        supplierAccount.bills.push(billEntry);
       } else {
         supplierAccount = new SupplierAccount({
           sellerId,
@@ -672,102 +663,94 @@ productRouter.post(
           sellerAddress,
           bills: [billEntry],
           payments: [],
-          totalBillAmount: totals.totalPurchaseAmount,
-          paidAmount: 0,
-          pendingAmount: totals.totalPurchaseAmount,
         });
-
-        await supplierAccount.save();
       }
+
+      supplierAccount.totalBillAmount = supplierAccount.bills.reduce(
+        (sum, bill) => sum + bill.billAmount,
+        0
+      );
+      supplierAccount.pendingAmount =
+        supplierAccount.totalBillAmount - supplierAccount.paidAmount;
+      await supplierAccount.save();
 
       res.json(purchaseId);
     } catch (error) {
       console.error('Error creating purchase:', error);
-      res.status(500).json({ message: 'Error creating purchase', error });
+      res.status(500).json({ message: 'Error creating purchase', error: error.message });
     }
   })
 );
 
+
+// routes/productRoutes.js (continued)
 productRouter.put(
   '/purchase/:purchaseId',
   asyncHandler(async (req, res) => {
-    const { purchaseId } = req.params;
-    const {
-      sellerId,
-      sellerName,
-      invoiceNo,
-      items,
-      sellerAddress,
-      sellerGst,
-      billingDate,
-      invoiceDate,
-      totals,
-      transportationDetails,
-    } = req.body;
-
     try {
+      const { purchaseId } = req.params;
+      const {
+        sellerId,
+        sellerName,
+        invoiceNo,
+        items,
+        sellerAddress,
+        sellerGst,
+        billingDate,
+        invoiceDate,
+        totals,
+        transportationDetails,
+      } = req.body;
+
       const existingPurchase = await Purchase.findOne({ purchaseId });
       if (!existingPurchase) {
         return res.status(404).json({ message: 'Purchase not found' });
       }
 
       const oldSellerId = existingPurchase.sellerId;
-      const oldSellerName = existingPurchase.sellerName;
       const oldInvoiceNo = existingPurchase.invoiceNo;
 
-      // Extract old transportation details if they exist
-      const oldTransport = existingPurchase.transportationDetails || {};
-
-      // Map old quantities for stock adjustment
+      // 1. Adjust product stock
       const oldItemMap = new Map();
       for (const item of existingPurchase.items) {
-        oldItemMap.set(item.itemId, item.quantityInNumbers);
+        oldItemMap.set(item.itemId, parseFloat(item.quantityInNumbers));
       }
 
       for (const item of items) {
         const product = await Product.findOne({ item_id: item.itemId });
-
-        const oldQuantityInNumbers = oldItemMap.get(item.itemId) || 0;
-        const newQuantityInNumbers = parseFloat(item.quantityInNumbers).toFixed(2);
+        const oldQuantity = oldItemMap.get(item.itemId) || 0;
+        const newQuantity = parseFloat(item.quantityInNumbers);
 
         if (product) {
-          product.countInStock += newQuantityInNumbers - oldQuantityInNumbers;
-          product.price = parseFloat(item.totalPriceInNumbers).toFixed(2); // Ensure price is a number
-          Object.assign(product, item); // Update product fields
+          product.countInStock += newQuantity - oldQuantity;
+          product.price = parseFloat(item.totalPriceInNumbers);
+          Object.assign(product, item);
           await product.save();
         } else {
           const newProduct = new Product({
             item_id: item.itemId,
             ...item,
-            countInStock: newQuantityInNumbers,
-            price: parseFloat(item.totalPriceInNumbers).toFixed(2),
+            countInStock: newQuantity,
+            price: parseFloat(item.totalPriceInNumbers),
           });
           await newProduct.save();
         }
       }
 
-      // Update purchase details
+      // 2. Update purchase details
       existingPurchase.sellerId = sellerId;
       existingPurchase.sellerName = sellerName;
       existingPurchase.invoiceNo = invoiceNo;
-      existingPurchase.items = items.map((item) => ({
-        ...item,
-      }));
+      existingPurchase.items = items.map((item) => ({ ...item }));
       existingPurchase.sellerAddress = sellerAddress;
       existingPurchase.sellerGst = sellerGst;
       existingPurchase.billingDate = billingDate || existingPurchase.billingDate;
       existingPurchase.invoiceDate = invoiceDate || existingPurchase.invoiceDate;
       existingPurchase.totals = totals;
 
-      // Update transportation details
-      existingPurchase.transportationDetails = transportationDetails || existingPurchase.transportationDetails;
-
-      await existingPurchase.save();
-
-      // === Update SupplierAccount ===
+      // 3. Update SupplierAccount
       if (oldSellerId !== sellerId) {
-        // Supplier has changed
-        // Remove bill from old supplier account
+        // Remove bill from old supplier
         const oldSupplierAccount = await SupplierAccount.findOne({ sellerId: oldSellerId });
         if (oldSupplierAccount) {
           oldSupplierAccount.bills = oldSupplierAccount.bills.filter(
@@ -782,23 +765,16 @@ productRouter.put(
           await oldSupplierAccount.save();
         }
 
-        // Add bill to new supplier account
+        // Add bill to new supplier
         let newSupplierAccount = await SupplierAccount.findOne({ sellerId });
         const billEntry = {
-          invoiceNo: invoiceNo,
+          invoiceNo,
           billAmount: totals.totalPurchaseAmount,
           invoiceDate: invoiceDate || Date.now(),
         };
 
         if (newSupplierAccount) {
           newSupplierAccount.bills.push(billEntry);
-          newSupplierAccount.totalBillAmount = newSupplierAccount.bills.reduce(
-            (sum, bill) => sum + bill.billAmount,
-            0
-          );
-          newSupplierAccount.pendingAmount =
-            newSupplierAccount.totalBillAmount - newSupplierAccount.paidAmount;
-          await newSupplierAccount.save();
         } else {
           newSupplierAccount = new SupplierAccount({
             sellerId,
@@ -806,34 +782,39 @@ productRouter.put(
             sellerAddress,
             bills: [billEntry],
             payments: [],
-            totalBillAmount: totals.totalPurchaseAmount,
-            paidAmount: 0,
-            pendingAmount: totals.totalPurchaseAmount,
           });
-
-          await newSupplierAccount.save();
         }
+
+        newSupplierAccount.totalBillAmount = newSupplierAccount.bills.reduce(
+          (sum, bill) => sum + bill.billAmount,
+          0
+        );
+        newSupplierAccount.pendingAmount =
+          newSupplierAccount.totalBillAmount - newSupplierAccount.paidAmount;
+        await newSupplierAccount.save();
       } else {
-        // Supplier has not changed
+        // Update bill in the same supplier
         const supplierAccount = await SupplierAccount.findOne({ sellerId });
         if (supplierAccount) {
           const billIndex = supplierAccount.bills.findIndex(
             (bill) => bill.invoiceNo === oldInvoiceNo
           );
+
           if (billIndex !== -1) {
             supplierAccount.bills[billIndex] = {
               ...supplierAccount.bills[billIndex],
-              invoiceNo: invoiceNo,
+              invoiceNo,
               billAmount: totals.totalPurchaseAmount,
               invoiceDate: invoiceDate || Date.now(),
             };
           } else {
             supplierAccount.bills.push({
-              invoiceNo: invoiceNo,
+              invoiceNo,
               billAmount: totals.totalPurchaseAmount,
               invoiceDate: invoiceDate || Date.now(),
             });
           }
+
           supplierAccount.totalBillAmount = supplierAccount.bills.reduce(
             (sum, bill) => sum + bill.billAmount,
             0
@@ -844,185 +825,198 @@ productRouter.put(
         }
       }
 
-      // === Update SellerPayment ===
-      try {
-        if (oldSellerId !== sellerId) {
-          // Supplier has changed
-
-          // Remove billing from old seller
-          const oldSellerPayment = await SellerPayment.findOne({ sellerId: oldSellerId });
-          if (oldSellerPayment) {
-            const originalBillingsLength = oldSellerPayment.billings.length;
-            oldSellerPayment.billings = oldSellerPayment.billings.filter(
-              (billing) => billing.purchaseId !== purchaseId
-            );
-
-            // Check if a billing was removed
-            if (oldSellerPayment.billings.length < originalBillingsLength) {
-              oldSellerPayment.totalAmountBilled = oldSellerPayment.billings.reduce(
-                (sum, billing) => sum + billing.amount,
-                0
-              );
-              oldSellerPayment.paymentRemaining =
-                oldSellerPayment.totalAmountBilled - oldSellerPayment.totalAmountPaid;
-
-              await oldSellerPayment.save();
-            }
-          }
-
-          // Prepare billing entry for the new seller
-          const billingEntry = {
-            amount: totals.totalPurchaseAmount,
-            date: billingDate || new Date(),
-            purchaseId, // Ensure purchaseId is included
-            invoiceNo,
-          };
-
-          // Update or create new seller payment
-          const newSellerPayment = await SellerPayment.findOne({ sellerId });
-
-          if (newSellerPayment) {
-            // Check if the billing already exists to prevent duplicates
-            const existingBillingIndex = newSellerPayment.billings.findIndex(
-              (billing) => billing.purchaseId === purchaseId
-            );
-
-            if (existingBillingIndex !== -1) {
-              // Update existing billing
-              newSellerPayment.billings[existingBillingIndex] = billingEntry;
-            } else {
-              // Add new billing
-              newSellerPayment.billings.push(billingEntry);
-            }
-
-            newSellerPayment.totalAmountBilled = newSellerPayment.billings.reduce(
-              (sum, billing) => sum + billing.amount,
-              0
-            );
-            newSellerPayment.paymentRemaining =
-              newSellerPayment.totalAmountBilled - newSellerPayment.totalAmountPaid;
-
-            await newSellerPayment.save();
-          } else {
-            // Create a new SellerPayment document
-            const createdSellerPayment = new SellerPayment({
-              sellerId,
-              sellerName,
-              payments: [], // Assuming payments are managed elsewhere
-              billings: [billingEntry],
-              totalAmountBilled: totals.totalPurchaseAmount,
-              totalAmountPaid: 0,
-              paymentRemaining: totals.totalPurchaseAmount,
-            });
-
-            await createdSellerPayment.save();
-          }
-        } else {
-          // Supplier has not changed
-
-          const sellerPayment = await SellerPayment.findOne({ sellerId });
-          if (sellerPayment) {
-            const billingIndex = sellerPayment.billings.findIndex(
-              (billing) => billing.purchaseId === purchaseId
-            );
-
-            if (billingIndex !== -1) {
-              // Update existing billing
-              sellerPayment.billings[billingIndex] = {
-                ...sellerPayment.billings[billingIndex],
-                amount: totals.totalPurchaseAmount,
-                date: billingDate || new Date(),
-                invoiceNo,
-                // Ensure purchaseId remains intact
-                purchaseId: sellerPayment.billings[billingIndex].purchaseId || purchaseId,
-              };
-            } else {
-              // Add new billing
-              sellerPayment.billings.push({
-                amount: totals.totalPurchaseAmount,
-                date: billingDate || new Date(),
-                purchaseId, // Ensure purchaseId is included
-                invoiceNo,
-              });
-            }
-
-            // Recalculate totals
-            sellerPayment.totalAmountBilled = sellerPayment.billings.reduce(
-              (sum, billing) => sum + billing.amount,
-              0
-            );
-            sellerPayment.paymentRemaining =
-              sellerPayment.totalAmountBilled - sellerPayment.totalAmountPaid;
-
-            await sellerPayment.save();
-          } else {
-            // Handle the case where sellerPayment does not exist
-            // Create a new SellerPayment
-            const billingEntry = {
-              amount: totals.totalPurchaseAmount,
-              date: billingDate || new Date(),
-              purchaseId, // Ensure purchaseId is included
-              invoiceNo,
-            };
-
-            const newSellerPayment = new SellerPayment({
-              sellerId,
-              sellerName,
-              payments: [],
-              billings: [billingEntry],
-              totalAmountBilled: totals.totalPurchaseAmount,
-              totalAmountPaid: 0,
-              paymentRemaining: totals.totalPurchaseAmount,
-            });
-
-            await newSellerPayment.save();
-          }
-        }
-      } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'An error occurred while processing the seller payments.' });
-      }
-
-      // === Update TransportPayment ===
-
-      // Remove old transport billing if exists
-      if (oldTransport.transportCompanyName && oldTransport.transportType) {
-        const transportPayment = await TransportPayment.findOne({
-          transportName: oldTransport.transportCompanyName,
-          transportType: oldTransport.transportType,
-        });
-
-        if (transportPayment) {
-          transportPayment.billings = transportPayment.billings.filter(
-            (billing) => billing.billId !== oldTransport.billId
+      // 4. Update SellerPayment
+      if (oldSellerId !== sellerId) {
+        // Remove billing from old seller
+        const oldSellerPayment = await SellerPayment.findOne({ sellerId: oldSellerId });
+        if (oldSellerPayment) {
+          oldSellerPayment.billings = oldSellerPayment.billings.filter(
+            (billing) => billing.invoiceNo !== oldInvoiceNo
           );
-
-          transportPayment.totalAmountBilled = transportPayment.billings.reduce(
+          oldSellerPayment.totalAmountBilled = oldSellerPayment.billings.reduce(
             (sum, billing) => sum + billing.amount,
             0
           );
-          transportPayment.paymentRemaining =
-            transportPayment.totalAmountBilled - transportPayment.totalAmountPaid;
+          oldSellerPayment.paymentRemaining =
+            oldSellerPayment.totalAmountBilled - oldSellerPayment.totalAmountPaid;
+          await oldSellerPayment.save();
+        }
 
-          await transportPayment.save();
+        // Add billing to new seller
+        let newSellerPayment = await SellerPayment.findOne({ sellerId });
+        const billingEntry = {
+          amount: totals.totalPurchaseAmount,
+          date: billingDate || new Date(),
+          invoiceNo,
+          purchaseId,
+        };
+
+        if (newSellerPayment) {
+          newSellerPayment.billings.push(billingEntry);
+        } else {
+          newSellerPayment = new SellerPayment({
+            sellerId,
+            sellerName,
+            payments: [],
+            billings: [billingEntry],
+          });
+        }
+
+        newSellerPayment.totalAmountBilled = newSellerPayment.billings.reduce(
+          (sum, billing) => sum + billing.amount,
+            0
+          );
+        newSellerPayment.paymentRemaining =
+          newSellerPayment.totalAmountBilled - newSellerPayment.totalAmountPaid;
+        await newSellerPayment.save();
+      } else {
+        // Update billing in the same seller
+        const sellerPayment = await SellerPayment.findOne({ sellerId });
+        if (sellerPayment) {
+          const billingIndex = sellerPayment.billings.findIndex(
+            (billing) => billing.invoiceNo === oldInvoiceNo
+          );
+
+          if (billingIndex !== -1) {
+            sellerPayment.billings[billingIndex] = {
+              ...sellerPayment.billings[billingIndex],
+              amount: totals.totalPurchaseAmount,
+              date: billingDate || new Date(),
+              purchaseId,
+              invoiceNo,
+            };
+          } else {
+            sellerPayment.billings.push({
+              amount: totals.totalPurchaseAmount,
+              date: billingDate || new Date(),
+              purchaseId,
+              invoiceNo,
+            });
+          }
+
+          sellerPayment.totalAmountBilled = sellerPayment.billings.reduce(
+            (sum, billing) => sum + billing.amount,
+            0
+          );
+          sellerPayment.paymentRemaining =
+            sellerPayment.totalAmountBilled - sellerPayment.totalAmountPaid;
+          await sellerPayment.save();
+        } else {
+          // Create new SellerPayment
+          const newSellerPayment = new SellerPayment({
+            sellerId,
+            sellerName,
+            payments: [],
+            billings: [
+              {
+                amount: totals.totalPurchaseAmount,
+                date: billingDate || new Date(),
+                purchaseId,
+                invoiceNo,
+              },
+            ],
+          });
+
+          newSellerPayment.totalAmountBilled = newSellerPayment.billings.reduce(
+            (sum, billing) => sum + billing.amount,
+            0
+          );
+          newSellerPayment.paymentRemaining =
+            newSellerPayment.totalAmountBilled - newSellerPayment.totalAmountPaid;
+          await newSellerPayment.save();
         }
       }
 
-      // Add new transport billing if transportationDetails are provided
-      if (transportationDetails) {
-        const { logistic, local, other } = transportationDetails;
+      // 5. Update Transportation and TransportPayment
+      // Remove old transportation and transport payments if any
+      if (existingPurchase.transportationDetails) {
+        const { logistic: oldLogistic, local: oldLocal } = existingPurchase.transportationDetails;
 
-        // Logistic Transportation
+        if (oldLogistic) {
+          // Remove from TransportPayment
+          const transportPayment = await TransportPayment.findOne({
+            transportName: oldLogistic.transportCompanyName,
+            transportType: 'logistic',
+          });
+          
+          console.log(oldLogistic)
+          if (transportPayment) {
+            console.log(transportPayment)
+            transportPayment.billings = transportPayment.billings.filter(
+              (billing) => billing.billId !== oldLogistic.billId
+            );
+            transportPayment.totalAmountBilled = transportPayment.billings.reduce(
+              (sum, billing) => sum + billing.amount,
+              0
+            );
+            transportPayment.paymentRemaining =
+              transportPayment.totalAmountBilled - transportPayment.totalAmountPaid;
+            await transportPayment.save();
+          }
+
+          // Remove from Transportation
+          await Transportation.deleteOne({
+            purchaseId,
+            transportType: 'logistic',
+          });
+        }
+
+        if (oldLocal) {
+          // Similar code for local transport
+          // Remove from TransportPayment and Transportation
+          const transportPayment = await TransportPayment.findOne({
+            transportName: oldLocal.transportCompanyName,
+            transportType: 'local',
+          });
+
+          if (transportPayment) {
+            transportPayment.billings = transportPayment.billings.filter(
+              (billing) => billing.billId !== oldLocal.billId
+            );
+            transportPayment.totalAmountBilled = transportPayment.billings.reduce(
+              (sum, billing) => sum + billing.amount,
+              0
+            );
+            transportPayment.paymentRemaining =
+              transportPayment.totalAmountBilled - transportPayment.totalAmountPaid;
+            await transportPayment.save();
+          }
+
+                    // Remove from Transportation
+                    await Transportation.deleteOne({
+                      purchaseId,
+                      transportType: 'local',
+                    });
+        }
+      }
+
+      // Add new transportation details
+      if (transportationDetails) {
+        const { logistic, local } = transportationDetails;
+
         if (
           logistic &&
           logistic.transportCompanyName &&
           logistic.transportationCharges !== undefined
         ) {
+          const logisticTransport = new Transportation({
+            purchaseId,
+            invoiceNo: logistic.invoiceNo || invoiceNo,
+            transportType: 'logistic',
+            companyGst: logistic.companyGst,
+            billId: logistic.billId,
+            transportCompanyName: logistic.transportCompanyName,
+            transportationCharges: parseFloat(logistic.transportationCharges),
+            remarks: logistic.remark,
+          });
+
+          await logisticTransport.save();
+
           const logisticBillingEntry = {
-            amount: parseFloat(logistic.transportationCharges).toFixed(2),
+            amount: parseFloat(logistic.transportationCharges),
             date: logistic.billingDate || Date.now(),
             billId: logistic.billId,
-            invoiceNo: logistic.invoiceNo,
+            invoiceNo: logistic.invoiceNo || invoiceNo,
           };
 
           let logisticTransportPayment = await TransportPayment.findOne({
@@ -1032,40 +1026,47 @@ productRouter.put(
 
           if (logisticTransportPayment) {
             logisticTransportPayment.billings.push(logisticBillingEntry);
-            logisticTransportPayment.totalAmountBilled = logisticTransportPayment.billings.reduce(
-              (sum, billing) => sum + billing.amount,
-              0
-            );
-            logisticTransportPayment.paymentRemaining =
-              logisticTransportPayment.totalAmountBilled -
-              logisticTransportPayment.totalAmountPaid;
-            await logisticTransportPayment.save();
           } else {
-            const newLogisticTransportPayment = new TransportPayment({
+            logisticTransportPayment = new TransportPayment({
               transportName: logistic.transportCompanyName,
               transportType: 'logistic',
               payments: [],
               billings: [logisticBillingEntry],
-              totalAmountBilled: parseFloat(logistic.transportationCharges).toFixed(2),
-              totalAmountPaid: 0,
-              paymentRemaining: parseFloat(logistic.transportationCharges).toFixed(2),
             });
-
-            await newLogisticTransportPayment.save();
           }
+
+          logisticTransportPayment.totalAmountBilled = logisticTransportPayment.billings.reduce(
+            (sum, billing) => sum + billing.amount,
+            0
+          );
+          logisticTransportPayment.paymentRemaining =
+            logisticTransportPayment.totalAmountBilled - logisticTransportPayment.totalAmountPaid;
+          await logisticTransportPayment.save();
         }
 
-        // Local Transportation
         if (
           local &&
           local.transportCompanyName &&
           local.transportationCharges !== undefined
         ) {
+          const localTransport = new Transportation({
+            purchaseId,
+            invoiceNo: local.invoiceNo || invoiceNo,
+            transportType: 'local',
+            companyGst: local.companyGst,
+            billId: local.billId,
+            transportCompanyName: local.transportCompanyName,
+            transportationCharges: parseFloat(local.transportationCharges),
+            remarks: local.remark,
+          });
+
+          await localTransport.save();
+
           const localBillingEntry = {
-            amount: parseFloat(local.transportationCharges).toFixed(2),
+            amount: parseFloat(local.transportationCharges),
             date: local.billingDate || Date.now(),
             billId: local.billId,
-            invoiceNo: local.invoiceNo,
+            invoiceNo: local.invoiceNo || invoiceNo,
           };
 
           let localTransportPayment = await TransportPayment.findOne({
@@ -1075,151 +1076,41 @@ productRouter.put(
 
           if (localTransportPayment) {
             localTransportPayment.billings.push(localBillingEntry);
-            localTransportPayment.totalAmountBilled = localTransportPayment.billings.reduce(
-              (sum, billing) => sum + billing.amount,
-              0
-            );
-            localTransportPayment.paymentRemaining =
-              localTransportPayment.totalAmountBilled -
-              localTransportPayment.totalAmountPaid;
-            await localTransportPayment.save();
           } else {
-            const newLocalTransportPayment = new TransportPayment({
+            localTransportPayment = new TransportPayment({
               transportName: local.transportCompanyName,
               transportType: 'local',
               payments: [],
               billings: [localBillingEntry],
-              totalAmountBilled: parseFloat(local.transportationCharges).toFixed(2),
-              totalAmountPaid: 0,
-              paymentRemaining: parseFloat(local.transportationCharges).toFixed(2),
             });
-
-            await newLocalTransportPayment.save();
           }
+
+          localTransportPayment.totalAmountBilled = localTransportPayment.billings.reduce(
+            (sum, billing) => sum + billing.amount,
+            0
+          );
+          localTransportPayment.paymentRemaining =
+          localTransportPayment.totalAmountBilled - localTransportPayment.totalAmountPaid;
+          await localTransportPayment.save();
         }
 
-        // Other Expenses
-        // Handle other expenses if necessary
-        // Example:
-        if (other && other.description && other.amount !== undefined) {
-          const otherBillingEntry = {
-            amount: parseFloat(other.amount).toFixed(2),
-            date: other.billingDate || Date.now(),
-            billId: other.billId,
-            invoiceNo: other.invoiceNo,
-            description: other.description,
-          };
-
-          let otherTransportPayment = await TransportPayment.findOne({
-            transportName: other.transportCompanyName,
-            transportType: 'other',
-          });
-
-          if (otherTransportPayment) {
-            otherTransportPayment.billings.push(otherBillingEntry);
-            otherTransportPayment.totalAmountBilled = otherTransportPayment.billings.reduce(
-              (sum, billing) => sum + billing.amount,
-              0
-            );
-            otherTransportPayment.paymentRemaining =
-              otherTransportPayment.totalAmountBilled -
-              otherTransportPayment.totalAmountPaid;
-            await otherTransportPayment.save();
-          } else {
-            const newOtherTransportPayment = new TransportPayment({
-              transportName: other.transportCompanyName,
-              transportType: 'other',
-              payments: [],
-              billings: [otherBillingEntry],
-              totalAmountBilled: parseFloat(other.amount).toFixed(2),
-              totalAmountPaid: 0,
-              paymentRemaining: parseFloat(other.amount).toFixed(2),
-            });
-
-            await newOtherTransportPayment.save();
-          }
-        }
-
-       // Update Transportation document
-if (transportationDetails) {
-  const { logistic, local } = transportationDetails;
-
-  // Update logistic transportation details
-  if (logistic) {
-    const transport = await Transportation.findOne({
-      purchaseId: purchaseId,
-      transportType: 'logistic',
-    });
-
-    if (transport) {
-      transport.invoiceNo = logistic.invoiceNo;
-      transport.transportCompanyName = logistic.transportCompanyName;
-      transport.transportationCharges = parseFloat(logistic.transportationCharges).toFixed(2);
-      transport.companyGst = logistic.companyGst;
-      transport.remarks = logistic.remark;
-      transport.billId = logistic.billId;
-      await transport.save();
-    } else {
-      const newTransport = new Transportation({
-        purchaseId: purchaseId,
-        invoiceNo: logistic.invoiceNo,
-        transportType: 'logistic',
-        companyGst: logistic.companyGst,
-        billId: logistic.billId,
-        transportCompanyName: logistic.transportCompanyName,
-        transportationCharges: parseFloat(logistic.transportationCharges).toFixed(2),
-        remarks: logistic.remark,
-      });
-
-      await newTransport.save();
-    }
-  }
-
-  // Update local transportation details
-  if (local) {
-    const transport = await Transportation.findOne({
-      purchaseId: purchaseId,
-      transportType: 'local',
-    });
-
-    if (transport) {
-      transport.invoiceNo = local.invoiceNo;
-      transport.transportCompanyName = local.transportCompanyName;
-      transport.transportationCharges = parseFloat(local.transportationCharges).toFixed(2);
-      transport.companyGst = local.companyGst;
-      transport.remarks = local.remark;
-      transport.billId = local.billId;
-      await transport.save();
-    } else {
-      const newTransport = new Transportation({
-        purchaseId: purchaseId,
-        invoiceNo: local.invoiceNo,
-        transportType: 'local',
-        companyGst: local.companyGst,
-        billId: local.billId,
-        transportCompanyName: local.transportCompanyName,
-        transportationCharges: parseFloat(local.transportationCharges).toFixed(2),
-        remarks: local.remark,
-      });
-
-      await newTransport.save();
-    }
-  }
-}
-
-
+        // Similar code for local transportation
       }
 
-      res.status(200).json({
-        message: 'Purchase updated successfully',
-        purchase: existingPurchase,
-      });
+      existingPurchase.transportationDetails =
+      transportationDetails || existingPurchase.transportationDetails;
+
+    await existingPurchase.save();
+
+      res.json({ message: 'Purchase updated successfully' });
     } catch (error) {
-      console.log('Error updating purchase:', error);
+      console.error('Error updating purchase:', error);
       res.status(500).json({ message: 'Error updating purchase', error: error.message });
     }
   })
 );
+
+
 
 productRouter.delete(
   '/purchases/delete/:id',
@@ -1242,13 +1133,13 @@ productRouter.delete(
             product.countInStock = 0; // Ensure stock doesn't go below zero
           }
 
-          await product.save(); // Save the updated product
+          await product.save();
         }
       }
 
       const sellerId = purchase.sellerId;
       const invoiceNo = purchase.invoiceNo;
-      const purchaseId = purchase._id;
+      const purchaseId = purchase.purchaseId;
 
       // Remove bill from SupplierAccount
       const supplierAccount = await SupplierAccount.findOne({ sellerId });
@@ -1269,7 +1160,7 @@ productRouter.delete(
       const sellerPayment = await SellerPayment.findOne({ sellerId });
       if (sellerPayment) {
         sellerPayment.billings = sellerPayment.billings.filter(
-          (billing) => billing.purchaseId.toString() !== purchaseId.toString()
+          (billing) => billing.invoiceNo !== invoiceNo
         );
         sellerPayment.totalAmountBilled = sellerPayment.billings.reduce(
           (sum, billing) => sum + billing.amount,
@@ -1303,10 +1194,18 @@ productRouter.delete(
               transportPayment.totalAmountBilled - transportPayment.totalAmountPaid;
             await transportPayment.save();
           }
+
+          // Remove Transportation document
+          await Transportation.deleteOne({
+            purchaseId,
+            transportType: 'logistic',
+          });
         }
 
         // Remove local transportation billing if exists
         if (local) {
+          // Similar logic for local transportation\
+
           const transportPayment = await TransportPayment.findOne({
             transportName: local.transportCompanyName,
             transportType: 'local',
@@ -1324,19 +1223,28 @@ productRouter.delete(
               transportPayment.totalAmountBilled - transportPayment.totalAmountPaid;
             await transportPayment.save();
           }
+
+          // Remove Transportation document
+          await Transportation.deleteOne({
+            purchaseId,
+            transportType: 'local',
+          });
         }
       }
 
       // Delete the purchase
       await purchase.remove();
 
-      res.send({ message: 'Purchase Deleted' });
+      res.json({ message: 'Purchase deleted successfully' });
     } catch (error) {
       console.error('Error deleting purchase:', error);
-      res.status(500).send({ message: 'Error Occurred', error: error.message });
+      res.status(500).json({ message: 'Error deleting purchase', error: error.message });
     }
   })
 );
+
+
+
 
 
 

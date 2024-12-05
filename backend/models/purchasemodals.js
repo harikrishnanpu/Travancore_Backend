@@ -1,7 +1,7 @@
-// purchaseModel.js
+// models/purchaseModel.js
 import mongoose from 'mongoose';
 
-const itemSchema = mongoose.Schema(
+const itemSchema = new mongoose.Schema(
   {
     itemId: { type: String, required: true },
     name: { type: String, required: true },
@@ -20,12 +20,12 @@ const itemSchema = mongoose.Schema(
     cashPartPriceInNumbers: { type: Number, required: true },
     billPartPriceInNumbers: { type: Number, required: true },
     allocatedOtherExpense: { type: Number, default: 0 },
-    totalPriceInNumbers: {type: Number, default: 0 },
+    totalPriceInNumbers: { type: Number, default: 0 },
   },
   { _id: false }
 );
 
-const totalsSchema = mongoose.Schema(
+const totalsSchema = new mongoose.Schema(
   {
     billPartTotal: { type: Number, required: true },
     cashPartTotal: { type: Number, required: true },
@@ -37,9 +37,9 @@ const totalsSchema = mongoose.Schema(
     gstAmountTransport: { type: Number, default: 0 },
     cgstTransport: { type: Number, default: 0 },
     sgstTransport: { type: Number, default: 0 },
-    unloadingCharge: { type: Number, default:0},
-    insurance: { type: Number, default: 0},
-    damagePrice: { type: Number, default:0 },
+    unloadingCharge: { type: Number, default: 0 },
+    insurance: { type: Number, default: 0 },
+    damagePrice: { type: Number, default: 0 },
     totalPurchaseAmount: { type: Number, required: true },
     totalOtherExpenses: { type: Number, default: 0 },
     grandTotalPurchaseAmount: { type: Number, required: true },
@@ -48,7 +48,7 @@ const totalsSchema = mongoose.Schema(
   { _id: false }
 );
 
-const purchaseSchema = mongoose.Schema(
+const purchaseSchema = new mongoose.Schema(
   {
     sellerName: { type: String, required: true },
     sellerId: { type: String, required: true },
@@ -60,6 +60,7 @@ const purchaseSchema = mongoose.Schema(
     billingDate: { type: Date, required: true },
     invoiceDate: { type: Date, required: true },
     totals: totalsSchema,
+    transportationDetails: { type: Object }, // Include transportationDetails
   },
   { timestamps: true }
 );

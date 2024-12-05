@@ -1,4 +1,4 @@
-// models/SupplierAccount.js
+// models/transportationAccount.js
 import mongoose from 'mongoose';
 
 const billSchema = new mongoose.Schema({
@@ -15,11 +15,10 @@ const paymentSchema = new mongoose.Schema({
   remark: { type: String },
 });
 
-const supplierAccountSchema = new mongoose.Schema(
+const transportationAccountSchema = new mongoose.Schema(
   {
-    sellerId: { type: String, unique: true, required: true },
-    sellerName: { type: String, required: true },
-    sellerAddress: { type: String, required: true },
+    companyName: { type: String, required: true },
+    transportType: { type: String, required: true },
     bills: [billSchema], // Array of bills
     payments: [paymentSchema], // Array of payments
     totalBillAmount: { type: Number, default: 0 },
@@ -30,12 +29,12 @@ const supplierAccountSchema = new mongoose.Schema(
 );
 
 // Middleware to calculate totalBillAmount, paidAmount, and pendingAmount before saving
-supplierAccountSchema.pre('save', function (next) {
+transportationAccountSchema.pre('save', function (next) {
   this.totalBillAmount = this.bills.reduce((sum, bill) => sum + bill.billAmount, 0);
   this.paidAmount = this.payments.reduce((sum, payment) => sum + payment.amount, 0);
   this.pendingAmount = this.totalBillAmount - this.paidAmount;
   next();
 });
 
-const SupplierAccount = mongoose.model('SupplierAccount', supplierAccountSchema);
-export default SupplierAccount;
+const TransportationAccount = mongoose.model('TransportationSchema', transportationAccountSchema);
+export default TransportationAccount;

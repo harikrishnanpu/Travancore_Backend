@@ -2,6 +2,9 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
 import SupplierAccount from '../models/supplierAccountModal.js';
+import mongoose from 'mongoose';
+import SellerPayment from '../models/sellerPayments.js';
+import PaymentsAccount from '../models/paymentsAccountModal.js';
 
 const supplierRouter = express.Router();
 
@@ -15,12 +18,6 @@ supplierRouter.post(
   [
     // Validation middleware using express-validator
     body('supplierName').trim().notEmpty().withMessage('Supplier Name is required'),
-    body('supplierContactNumber')
-      .trim()
-      .notEmpty()
-      .withMessage('Supplier Contact Number is required')
-      .matches(/^\d{10}$/)
-      .withMessage('Supplier Contact Number must be a 10-digit number'),
     body('bills').isArray().withMessage('Bills must be an array'),
     body('bills.*.invoiceNo')
       .trim()
@@ -176,58 +173,20 @@ supplierRouter.get('/get/:id', async (req, res) => {
 supplierRouter.put(
   '/:id/update',
   [
-    // Similar validation as the create route
-    body('supplierName')
-      .optional()
-      .trim()
-      .notEmpty()
-      .withMessage('Supplier Name cannot be empty'),
-    body('supplierContactNumber')
-      .optional()
-      .trim()
-      .notEmpty()
-      .withMessage('Supplier Contact Number cannot be empty')
-      .matches(/^\d{10}$/)
-      .withMessage('Supplier Contact Number must be a 10-digit number'),
-    body('bills').optional().isArray().withMessage('Bills must be an array'),
-    body('bills.*.invoiceNo')
-      .optional()
-      .trim()
-      .notEmpty()
-      .withMessage('Invoice Number is required for each bill'),
-    body('bills.*.billAmount')
-      .optional()
-      .isFloat({ min: 0 })
-      .withMessage('Bill Amount must be a positive number'),
-    body('bills.*.invoiceDate')
-      .optional()
-      .isISO8601()
-      .toDate()
-      .withMessage('Invalid Invoice Date'),
-    body('payments').optional().isArray().withMessage('Payments must be an array'),
-    body('payments.*.amount')
-      .optional()
-      .isFloat({ min: 0 })
-      .withMessage('Payment Amount must be a positive number'),
-    body('payments.*.submittedBy')
-      .optional()
-      .trim()
-      .notEmpty()
-      .withMessage('Submitted By is required for each payment'),
-    body('payments.*.date')
-      .optional()
-      .isISO8601()
-      .toDate()
-      .withMessage('Invalid Payment Date'),
-    body('payments.*.remark')
-      .optional()
-      .trim(),
-    body('supplierId')
-      .optional()
-      .trim()
-      .notEmpty()
-      .withMessage('Supplier ID cannot be empty'),
-    // You can add more validations as needed
+    // Validation
+    body('supplierName').trim().notEmpty().withMessage('Supplier Name cannot be empty'),
+    body('supplierAddress').trim().notEmpty().withMessage('Supplier Address cannot be empty'),
+    body('bills').isArray().withMessage('Bills must be an array'),
+    body('bills.*.invoiceNo').trim().notEmpty().withMessage('Invoice Number is required for each bill'),
+    body('bills.*.billAmount').isFloat({ min: 0 }).withMessage('Bill Amount must be a positive number'),
+    body('bills.*.invoiceDate').optional().isISO8601().toDate().withMessage('Invalid Invoice Date'),
+    body('payments').isArray().withMessage('Payments must be an array'),
+    body('payments.*.amount').isFloat({ min: 0 }).withMessage('Payment Amount must be a positive number'),
+    body('payments.*.submittedBy').trim().notEmpty().withMessage('Submitted By is required for each payment'),
+    body('payments.*.method').trim().notEmpty().withMessage('Payment method is required'),
+    body('payments.*.date').optional().isISO8601().toDate().withMessage('Invalid Payment Date'),
+    body('payments.*.remark').optional().trim(),
+    body('supplierId').trim().notEmpty().withMessage('Supplier ID cannot be empty'),
   ],
   async (req, res) => {
     // Handle validation errors
@@ -237,59 +196,174 @@ supplierRouter.put(
       return res.status(400).json({ message: errors.array()[0].msg });
     }
 
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       const { supplierName, bills, payments, supplierAddress, supplierId } = req.body;
 
       // Find the supplier account by ID
-      const account = await SupplierAccount.findById(req.params.id);
+      const account = await SupplierAccount.findById(req.params.id).session(session);
       if (!account) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(404).json({ message: 'Supplier Account not found' });
+      }
+
+      // Find or create the SellerPayment document
+      let sellerPayment = await SellerPayment.findOne({ sellerId: account.sellerId }).session(session);
+      if (!sellerPayment) {
+        sellerPayment = new SellerPayment({
+          sellerId: account.sellerId,
+          sellerName: account.sellerName,
+          billings: [],
+          payments: [],
+        });
       }
 
       // Update fields if they are provided
       if (supplierName !== undefined) {
         account.sellerName = supplierName.trim();
+        sellerPayment.sellerName = supplierName.trim();
       }
 
-      if (supplierContactNumber !== undefined) {
+      if (supplierAddress !== undefined) {
         account.sellerAddress = supplierAddress.trim();
       }
 
-      if (supplierId !== undefined) {
+      if (supplierId !== undefined && supplierId.trim() !== account.sellerId) {
+        // Update sellerId in all related documents
+        sellerPayment.sellerId = supplierId.trim();
         account.sellerId = supplierId.trim();
       }
 
+      // **Handle Bills**
       if (bills !== undefined) {
         // Check for duplicate invoice numbers within the bills
         const invoiceNos = bills.map((bill) => bill.invoiceNo.trim());
         const uniqueInvoiceNos = new Set(invoiceNos);
         if (invoiceNos.length !== uniqueInvoiceNos.size) {
+          await session.abortTransaction();
+          session.endSession();
           return res.status(400).json({ message: 'Duplicate invoice numbers are not allowed within bills.' });
         }
 
-        // Update bills
+        // Determine added and removed bills
+        const existingInvoiceNos = account.bills.map((bill) => bill.invoiceNo);
+        const newInvoiceNos = bills.map((bill) => bill.invoiceNo.trim());
+
+        const addedBills = bills.filter((bill) => !existingInvoiceNos.includes(bill.invoiceNo.trim()));
+        const removedBills = account.bills.filter((bill) => !newInvoiceNos.includes(bill.invoiceNo));
+
+        // Update bills in SupplierAccount
         account.bills = bills.map((bill) => ({
           invoiceNo: bill.invoiceNo.trim(),
           billAmount: parseFloat(bill.billAmount),
           invoiceDate: bill.invoiceDate ? new Date(bill.invoiceDate) : undefined,
         }));
+
+        // Update billings in SellerPayment
+        // Remove old bills
+        sellerPayment.billings = sellerPayment.billings.filter(
+          (billing) => !removedBills.some((bill) => bill.invoiceNo === billing.invoiceNo)
+        );
+
+        // Add new bills
+        addedBills.forEach((bill) => {
+          sellerPayment.billings.push({
+            amount: parseFloat(bill.billAmount),
+            date: bill.invoiceDate ? new Date(bill.invoiceDate) : new Date(),
+            invoiceNo: bill.invoiceNo.trim(),
+          });
+        });
       }
 
+      // **Handle Payments**
       if (payments !== undefined) {
-        // Update payments
+        // Determine added and removed payments
+        const existingPaymentIds = account.payments.map((payment) => payment._id.toString());
+        const newPaymentIds = payments.map((payment) => payment._id).filter(Boolean);
+
+        const addedPayments = payments.filter((payment) => !existingPaymentIds.includes(payment._id));
+        const removedPayments = account.payments.filter(
+          (payment) => !newPaymentIds.includes(payment._id.toString())
+        );
+
+        // Update payments in SupplierAccount
         account.payments = payments.map((payment) => ({
           amount: parseFloat(payment.amount),
-          date: payment.date ? new Date(payment.date) : undefined,
+          date: payment.date ? new Date(payment.date) : new Date(),
+          method: payment.method.trim(),
           submittedBy: payment.submittedBy.trim(),
           remark: payment.remark ? payment.remark.trim() : '',
         }));
+
+        // Update payments in SellerPayment
+        // Remove old payments
+        sellerPayment.payments = sellerPayment.payments.filter(
+          (payment) => !removedPayments.some((p) => p._id.toString() === payment._id.toString())
+        );
+
+        // Add new payments
+        for (const payment of addedPayments) {
+          const paymentReferenceId = 'PAY' + Date.now().toString();
+          const paymentEntry = {
+            amount: parseFloat(payment.amount),
+            date: payment.date ? new Date(payment.date) : new Date(),
+            method: payment.method.trim(),
+            submittedBy: payment.submittedBy.trim(),
+            remark: payment.remark ? payment.remark.trim() : '',
+          };
+          sellerPayment.payments.push(paymentEntry);
+
+          // Update PaymentsAccount
+          const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
+          if (!paymentsAccount) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({ message: `Payment account ${payment.method.trim()} not found` });
+          }
+          paymentsAccount.paymentsOut.push({
+            amount: parseFloat(payment.amount),
+            method: payment.method.trim(),
+            remark: `Payment to supplier ${account.sellerName}`,
+            submittedBy: payment.submittedBy.trim(),
+            referenceId: paymentReferenceId,
+            date: payment.date ? new Date(payment.date) : new Date(),
+          });
+          await paymentsAccount.save({ session });
+        }
+
+        // Handle removed payments in PaymentsAccount
+        for (const payment of removedPayments) {
+          const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
+          if (paymentsAccount) {
+            paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
+              (p) =>
+                !(
+                  p.amount === payment.amount &&
+                  p.date.getTime() === payment.date.getTime() &&
+                  p.submittedBy === payment.submittedBy &&
+                  p.remark === (payment.remark ? payment.remark.trim() : '')
+                )
+            );
+            await paymentsAccount.save({ session });
+          }
+        }
       }
 
-      // Save the updated account (balanceAmount, paidAmount, pendingAmount will be auto-calculated)
-      const updatedAccount = await account.save();
+      // Save the updated documents
+      await account.save({ session });
+      await sellerPayment.save({ session });
 
-      res.json(updatedAccount);
+      await session.commitTransaction();
+      session.endSession();
+
+      res.json({ message: 'Supplier account updated successfully', account });
     } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+
       console.error('Error updating supplier account:', error);
 
       // Handle duplicate key errors (e.g., duplicate supplierId or accountId)
@@ -298,9 +372,10 @@ supplierRouter.put(
         return res.status(400).json({ message: `${duplicateField} must be unique.` });
       }
 
-      res.status(500).json({ message: 'Server Error' });
+      res.status(500).json({ message: 'Server Error', error: error.message });
     }
   }
 );
+
 
 export default supplierRouter;

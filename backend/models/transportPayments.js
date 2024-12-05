@@ -29,13 +29,6 @@ const transportPaymentAggregateSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Pre-save middleware to auto-calculate total amounts and payment remaining
-transportPaymentAggregateSchema.pre('save', function (next) {
-  this.totalAmountPaid = this.payments.reduce((sum, payment) => sum + payment.amount, 0);
-  this.totalAmountBilled = this.billings.reduce((sum, billing) => sum + billing.amount, 0);
-  this.paymentRemaining = this.totalAmountBilled - this.totalAmountPaid;
-  next();
-});
 
 // Method to add a payment and recalculate amounts
 transportPaymentAggregateSchema.methods.addPayment = function (payment) {
@@ -53,6 +46,13 @@ transportPaymentAggregateSchema.methods.addBilling = function (billing) {
   return this.save();
 };
 
-const TransportPayment = mongoose.model('TransportPayment', transportPaymentAggregateSchema);
+// Pre-save middleware to auto-calculate total amounts and payment remaining
+transportPaymentAggregateSchema.pre('save', function (next) {
+  this.totalAmountPaid = this.payments.reduce((sum, payment) => sum + payment.amount, 0);
+  this.totalAmountBilled = this.billings.reduce((sum, billing) => sum + billing.amount, 0);
+  this.paymentRemaining = this.totalAmountBilled - this.totalAmountPaid;
+  next();
+});
 
+const TransportPayment = mongoose.model('TransportPayment', transportPaymentAggregateSchema);
 export default TransportPayment;

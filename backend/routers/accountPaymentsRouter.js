@@ -7,6 +7,7 @@ const accountRouter = express.Router();
 accountRouter.post('/create', async (req, res) => {
     try {
       const { accountName, balance} = req.body;
+      const referenceId =  'BILL' + Date.now().toString();
   
       // Create new PaymentAccount instance
       const newAccount = new PaymentsAccount({
@@ -18,6 +19,7 @@ accountRouter.post('/create', async (req, res) => {
         method: 'Opening Account',
         remark: 'Initial Balance',
         submittedBy: req.body.userId,
+        referenceId
       }
 
       newAccount.paymentsIn.push(billingEntry)

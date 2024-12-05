@@ -7,12 +7,11 @@ import { generateToken, isAdmin, isAuth } from '../utils.js';
 import AttendenceModel from '../models/attendenceModel.js';
 import Location from '../models/locationModel.js'
 import Billing from '../models/billingModal.js';
-import Return from '../models/returnModal.js';
 import Product from '../models/productModel.js';
-import Purchase from '../models/purchasemodals.js';
-import Damage from '../models/damageModal.js';
 import Log from '../models/Logmodal.js';
 import PaymentsAccount from '../models/paymentsAccountModal.js';
+import CustomerAccount from '../models/customerModal.js';
+import mongoose from 'mongoose';
 
 const userRouter = express.Router();
 
@@ -573,55 +572,161 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
 
 
 
+// =========================
+// Route: Update Payment for a Billing Entry
+// =========================
 userRouter.post("/billing/update-payment", async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { invoiceNo, paymentAmount, paymentMethod, userId } = req.body;
 
     // Validate required fields
-    if (!invoiceNo || !paymentAmount || !paymentMethod) {
+    if (!invoiceNo || !paymentAmount || !paymentMethod || !userId) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ error: "All fields are required." });
     }
 
     // Find the billing record
-    const billing = await Billing.findOne({ invoiceNo });
+    const billing = await Billing.findOne({ invoiceNo: invoiceNo.trim() }).session(session);
     if (!billing) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ error: "Billing not found" });
     }
 
-    const parsedPaymentAmount = parseFloat(paymentAmount).toFixed(2);
+    // Find the user
+    const user = await User.findById(userId).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const parsedPaymentAmount = parseFloat(paymentAmount);
+    if (isNaN(parsedPaymentAmount) || parsedPaymentAmount <= 0) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ error: "Invalid payment amount." });
+    }
+
+    const referenceId = "PAY" + Date.now().toString();
+    const currentDate = new Date();
+
+    // Create payment entries
+    const paymentEntry = {
+      amount: parsedPaymentAmount,
+      method: paymentMethod.trim(),
+      date: currentDate,
+      referenceId: referenceId,
+      invoiceNo: invoiceNo.trim(),
+    };
 
     const accountPaymentEntry = {
       amount: parsedPaymentAmount,
-      method: paymentMethod,
-      remark: `Bill ${invoiceNo}`,
+      method: paymentMethod.trim(),
+      referenceId: referenceId,
+      remark: `Bill ${invoiceNo.trim()}`,
       submittedBy: userId,
+      date: currentDate,
     };
-  
-    try {
-      const account = await PaymentsAccount.findOne({ accountId: paymentMethod });
-    
-      if (!account) {
-        console.log(`No account found for accountId: ${paymentMethod}`);
-        return res.status(404).json({ message: 'Payment account not found' });
-      }
-    
-      account.paymentsIn.push(accountPaymentEntry);
-    
-      await account.save();
-    } catch (error) {
-      console.error('Error processing payment:', error);
-      return res.status(500).json({ message: 'Error processing payment', error });
+
+    const customerPaymentEntry = {
+      amount: parsedPaymentAmount,
+      method: paymentMethod.trim(),
+      remark: `Bill ${invoiceNo.trim()}`,
+      submittedBy: userId,
+      date: currentDate,
+      referenceId: referenceId,
+      invoiceNo: invoiceNo.trim(),
+    };
+
+    // Update PaymentsAccount
+    const account = await PaymentsAccount.findOne({ accountId: paymentMethod.trim() }).session(session);
+    if (!account) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: 'Payment account not found' });
     }
 
-    // Add the new payment using the model's method
-    await billing.addPayment(paymentAmount, paymentMethod);
+    account.paymentsIn.push(accountPaymentEntry);
+    await account.save({ session });
 
-    res.status(200).json({ message: "Payment updated successfully.", paymentStatus: billing.paymentStatus });
+    // Add the new payment to billing
+    billing.payments.push(paymentEntry);
+
+    // Recalculate the total payments received
+    billing.billingAmountReceived = billing.payments.reduce(
+      (total, payment) => total + (payment.amount || 0),
+      0
+    );
+
+    // Calculate net amount after discount
+    const netAmount = billing.grandTotal || 0;
+
+    // Update the payment status based on the total amount received vs net amount
+    if (billing.billingAmountReceived >= netAmount) {
+      billing.paymentStatus = "Paid";
+    } else if (billing.billingAmountReceived > 0) {
+      billing.paymentStatus = "Partial";
+    } else {
+      billing.paymentStatus = "Unpaid";
+    }
+
+    await billing.save({ session });
+
+    // Update CustomerAccount
+    let customerAccount = await CustomerAccount.findOne({ customerId: billing.customerId.trim() }).session(session);
+    if (!customerAccount) {
+      // Create new customer account if not found
+      customerAccount = new CustomerAccount({
+        customerId: billing.customerId.trim(),
+        customerName: billing.customerName.trim(),
+        customerAddress: billing.customerAddress.trim(),
+        customerContactNumber: billing.customerContactNumber.trim(),
+        bills: [],
+        payments: [],
+      });
+    }
+
+    customerAccount.payments.push(customerPaymentEntry);
+
+    // Recalculate totalBillAmount, paidAmount, pendingAmount
+    customerAccount.totalBillAmount = customerAccount.bills.reduce(
+      (acc, bill) => acc + (bill.billAmount || 0),
+      0
+    );
+    customerAccount.paidAmount = customerAccount.payments.reduce(
+      (acc, payment) => acc + (payment.amount || 0),
+      0
+    );
+    customerAccount.pendingAmount = customerAccount.totalBillAmount - customerAccount.paidAmount;
+
+    await customerAccount.save({ session });
+
+    // Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(200).json({
+      message: "Payment updated successfully.",
+      paymentStatus: billing.paymentStatus,
+    });
   } catch (error) {
     console.error("Error updating payment:", error);
+
+    // Abort transaction on error
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
+
     res.status(500).json({ error: error.message || "Failed to update payment." });
   }
 });
+
 
 
 

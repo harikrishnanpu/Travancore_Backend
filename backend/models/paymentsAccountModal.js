@@ -14,6 +14,10 @@ const paymentSchema = new mongoose.Schema({
   remark: {
     type: String,
   },
+  referenceId: {
+    type: String,
+    required: true,
+  },
   submittedBy: {
     type: String,
     required: true,
@@ -54,12 +58,21 @@ const paymentAccountSchema = new mongoose.Schema(
 );
 
 // Middleware to calculate balanceAmount before saving
-paymentAccountSchema.pre('save', function (next) {
-  const totalIn = this.paymentsIn.reduce((acc, payment) => acc + payment.amount, 0);
-  const totalOut = this.paymentsOut.reduce((acc, payment) => acc + payment.amount, 0);
+paymentAccountSchema.pre("save", function (next) {
+  const totalIn = this.paymentsIn.reduce(
+    (acc, payment) => acc + payment.amount,
+    0
+  );
+  const totalOut = this.paymentsOut.reduce(
+    (acc, payment) => acc + payment.amount,
+    0
+  );
   this.balanceAmount = totalIn - totalOut;
   next();
 });
 
-const PaymentsAccount = mongoose.model('PaymentAccounts', paymentAccountSchema);
+const PaymentsAccount = mongoose.model(
+  "PaymentsAccount",
+  paymentAccountSchema
+);
 export default PaymentsAccount;
