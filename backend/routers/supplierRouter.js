@@ -123,6 +123,9 @@ supplierRouter.post(
 supplierRouter.delete('/:id/delete', async (req, res) => {
   try {
     const account = await SupplierAccount.findByIdAndDelete(req.params.id);
+    if(account){
+      const sellerPaymentAccount = await SellerPayment.findOneAndDelete({ sellerId: account.sellerId })
+    }
     if (!account) {
       return res.status(404).json({ message: 'Supplier Account not found' });
     }
