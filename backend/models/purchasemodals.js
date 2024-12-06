@@ -13,6 +13,8 @@ const itemSchema = new mongoose.Schema(
     psRatio: { type: Number },
     length: { type: Number },
     breadth: { type: Number },
+    actLength: {type: Number},
+    actBreadth: {type: Number},
     size: { type: String },
     pUnit: { type: String },
     cashPartPrice: { type: Number, required: true },

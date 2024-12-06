@@ -571,4 +571,47 @@ customerRouter.put(
   }
 );
 
+
+
+
+customerRouter.get('/daily/payments', async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    if (!date) {
+      return res.status(400).json({ message: 'Date is required' });
+    }
+
+    const selectedDate = new Date(date);
+    if (isNaN(selectedDate)) {
+      return res.status(400).json({ message: 'Invalid date format' });
+    }
+
+    selectedDate.setUTCHours(0, 0, 0, 0);
+    const nextDate = new Date(selectedDate);
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+
+    const customers = await CustomerAccount.aggregate([
+      { $unwind: '$payments' },
+      {
+        $match: {
+          'payments.date': { $gte: selectedDate, $lt: nextDate },
+        },
+      },
+      {
+        $group: {
+          _id: '$customerId',
+          customerName: { $first: '$customerName' },
+          payments: { $push: '$payments' },
+        },
+      },
+    ]);
+
+    res.json(customers);
+  } catch (error) {
+    console.error('Error fetching seller payments:', error);
+    res.status(500).json({ message: 'Error fetching seller payments' });
+  }
+});
+
 export default customerRouter;

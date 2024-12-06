@@ -15,59 +15,15 @@ const supplierRouter = express.Router();
  */
 supplierRouter.post(
   '/create',
-  [
-    // Validation middleware using express-validator
-    body('supplierName').trim().notEmpty().withMessage('Supplier Name is required'),
-    body('bills').isArray().withMessage('Bills must be an array'),
-    body('bills.*.invoiceNo')
-      .trim()
-      .notEmpty()
-      .withMessage('Invoice Number is required for each bill'),
-    body('bills.*.billAmount')
-      .isFloat({ min: 0 })
-      .withMessage('Bill Amount must be a positive number'),
-    body('bills.*.invoiceDate')
-      .optional()
-      .isISO8601()
-      .toDate()
-      .withMessage('Invalid Invoice Date'),
-    body('payments').isArray().withMessage('Payments must be an array'),
-    body('payments.*.amount')
-      .isFloat({ min: 0 })
-      .withMessage('Payment Amount must be a positive number'),
-    body('payments.*.submittedBy')
-      .trim()
-      .notEmpty()
-      .withMessage('Submitted By is required for each payment'),
-    body('payments.*.date')
-      .optional()
-      .isISO8601()
-      .toDate()
-      .withMessage('Invalid Payment Date'),
-    body('payments.*.remark')
-      .optional()
-      .trim(),
-    // You can add more validations as needed
-    body('supplierId')
-      .trim()
-      .notEmpty()
-      .withMessage('Supplier ID is required'),
-  ],
   async (req, res) => {
-    // Handle validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      // Return the first validation error
-      return res.status(400).json({ message: errors.array()[0].msg });
-    }
 
     try {
       const {
-        supplierName,
+        sellerName,
         bills,
         payments,
-        supplierAddress,
-        supplierId,
+        sellerAddress,
+        sellerId,
       } = req.body;
 
       // Check if there are duplicate invoice numbers within the bills
@@ -79,21 +35,67 @@ supplierRouter.post(
 
       // Create a new SupplierAccount instance
       const newSupplierAccount = new SupplierAccount({
-        sellerId: supplierId.trim(),
-        sellerName: supplierName.trim(),
-        sellerAddress: supplierAddress.trim(),
+        sellerId: sellerId.trim(),
+        sellerName: sellerName.trim(),
+        sellerAddress: sellerAddress.trim(),
         bills: bills.map((bill) => ({
           invoiceNo: bill.invoiceNo.trim(),
           billAmount: parseFloat(bill.billAmount),
           invoiceDate: bill.invoiceDate ? new Date(bill.invoiceDate) : undefined,
-        })),
-        payments: payments.map((payment) => ({
-          amount: parseFloat(payment.amount),
-          date: payment.date ? new Date(payment.date) : undefined,
-          submittedBy: payment.submittedBy.trim(),
-          remark: payment.remark ? payment.remark.trim() : '',
-        })),
+        }))
       });
+
+
+  // **Handle Payments**
+  if (payments !== undefined && payments[0].amount < 0) {
+
+    // Add new payments
+    for (const payment of addedPayments) {
+      const paymentReferenceId = 'PAY' + Date.now().toString();
+      const paymentEntry = {
+        amount: parseFloat(payment.amount),
+        date: payment.date ? new Date(payment.date) : new Date(),
+        method: payment.method.trim(),
+        submittedBy: payment.submittedBy.trim(),
+        remark: payment.remark ? payment.remark.trim() : '',
+      };
+      newSupplierAccount.payments.push(paymentEntry);
+
+      // Update PaymentsAccount
+      const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
+      if (!paymentsAccount) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({ message: `Payment account ${payment.method.trim()} not found` });
+      }
+      paymentsAccount.paymentsOut.push({
+        amount: parseFloat(payment.amount),
+        method: payment.method.trim(),
+        remark: `Payment to supplier ${account.sellerName}`,
+        submittedBy: payment.submittedBy.trim(),
+        referenceId: paymentReferenceId,
+        date: payment.date ? new Date(payment.date) : new Date(),
+      });
+      await paymentsAccount.save({ session });
+    }
+
+    // Handle removed payments in PaymentsAccount
+    for (const payment of removedPayments) {
+      const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
+      if (paymentsAccount) {
+        paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
+          (p) =>
+            !(
+              p.amount === payment.amount &&
+              p.date.getTime() === payment.date.getTime() &&
+              p.submittedBy === payment.submittedBy &&
+              p.remark === (payment.remark ? payment.remark.trim() : '')
+            )
+        );
+        await paymentsAccount.save({ session });
+      }
+    }
+  }
 
       // Save the new supplier account to the database
       const savedAccount = await newSupplierAccount.save();
@@ -376,6 +378,50 @@ supplierRouter.put(
     }
   }
 );
+
+
+
+
+
+supplierRouter.get('/daily/payments', async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    if (!date) {
+      return res.status(400).json({ message: 'Date is required' });
+    }
+
+    const selectedDate = new Date(date);
+    if (isNaN(selectedDate)) {
+      return res.status(400).json({ message: 'Invalid date format' });
+    }
+
+    selectedDate.setUTCHours(0, 0, 0, 0);
+    const nextDate = new Date(selectedDate);
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+
+    const sellers = await SupplierAccount.aggregate([
+      { $unwind: '$payments' },
+      {
+        $match: {
+          'payments.date': { $gte: selectedDate, $lt: nextDate },
+        },
+      },
+      {
+        $group: {
+          _id: '$sellerId',
+          sellerName: { $first: '$sellerName' },
+          payments: { $push: '$payments' },
+        },
+      },
+    ]);
+
+    res.json(sellers);
+  } catch (error) {
+    console.error('Error fetching seller payments:', error);
+    res.status(500).json({ message: 'Error fetching seller payments' });
+  }
+});
 
 
 export default supplierRouter;

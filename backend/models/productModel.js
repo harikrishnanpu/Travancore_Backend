@@ -24,6 +24,8 @@ const productSchema = new mongoose.Schema(
     psRatio: {type: String},
     length: {type: String},
     breadth: {type: String},
+    actLength: {type: String},
+    actBreadth: {type: String},
     size: {type: String},
     unit: {type: String},
     price: {type: String},

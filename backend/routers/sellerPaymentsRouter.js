@@ -241,46 +241,6 @@ sellerPaymentsRouter.post(('/add-billing/:id'), async (req, res) => {
 
 // sellerPaymentsRouter.js
 
-sellerPaymentsRouter.get('/daily/payments', async (req, res) => {
-  try {
-    const { date } = req.query;
-
-    if (!date) {
-      return res.status(400).json({ message: 'Date is required' });
-    }
-
-    const selectedDate = new Date(date);
-    if (isNaN(selectedDate)) {
-      return res.status(400).json({ message: 'Invalid date format' });
-    }
-
-    selectedDate.setUTCHours(0, 0, 0, 0);
-    const nextDate = new Date(selectedDate);
-    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-
-    const sellers = await SellerPayment.aggregate([
-      { $unwind: '$payments' },
-      {
-        $match: {
-          'payments.date': { $gte: selectedDate, $lt: nextDate },
-        },
-      },
-      {
-        $group: {
-          _id: '$sellerId',
-          sellerName: { $first: '$sellerName' },
-          payments: { $push: '$payments' },
-        },
-      },
-    ]);
-
-    res.json(sellers);
-  } catch (error) {
-    console.error('Error fetching seller payments:', error);
-    res.status(500).json({ message: 'Error fetching seller payments' });
-  }
-});
-
 
 
 
