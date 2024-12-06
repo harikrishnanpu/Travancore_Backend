@@ -121,20 +121,46 @@ supplierRouter.post(
  * @access  Protected (Assuming authentication middleware is applied)
  */
 supplierRouter.delete('/:id/delete', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
-    const account = await SupplierAccount.findByIdAndDelete(req.params.id);
-    if(account){
-      const sellerPaymentAccount = await SellerPayment.findOneAndDelete({ sellerId: account.sellerId })
-    }
+    // Find and delete the SupplierAccount
+    const account = await SupplierAccount.findByIdAndDelete(req.params.id).session(session);
     if (!account) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ message: 'Supplier Account not found' });
     }
-    res.json({ message: 'Supplier Account deleted successfully' });
+
+    // Delete the associated SellerPayment record
+    const sellerPaymentAccount = await SellerPayment.findOneAndDelete({ sellerId: account.sellerId }).session(session);
+
+    // Remove payments from PaymentsAccount
+    const paymentMethods = account.payments.map((payment) => payment.method.trim());
+    for (const method of paymentMethods) {
+      const paymentsAccount = await PaymentsAccount.findOne({ accountId: method }).session(session);
+      if (paymentsAccount) {
+        // Filter out payments linked to the deleted supplier
+        paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
+          (payment) => payment.remark !== `Payment to supplier ${account.sellerName}`
+        );
+        await paymentsAccount.save({ session });
+      }
+    }
+
+    // Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json({ message: 'Supplier Account and associated data deleted successfully' });
   } catch (error) {
     console.error('Error deleting supplier account:', error);
+    await session.abortTransaction();
+    session.endSession();
     res.status(500).json({ message: 'Server Error' });
   }
 });
+
 
 /**
  * @route   GET /api/suppliers/allaccounts
@@ -303,6 +329,15 @@ supplierRouter.put(
           remark: payment.remark ? payment.remark.trim() : '',
         }));
 
+
+        sellerPayment.payments = payments.map((payment) => ({
+          amount: parseFloat(payment.amount),
+          date: payment.date ? new Date(payment.date) : new Date(),
+          method: payment.method.trim(),
+          submittedBy: payment.submittedBy.trim(),
+          remark: payment.remark ? payment.remark.trim() : '',
+        }));
+
         // Update payments in SellerPayment
         // Remove old payments
         sellerPayment.payments = sellerPayment.payments.filter(
@@ -312,49 +347,79 @@ supplierRouter.put(
         // Add new payments
         for (const payment of addedPayments) {
           const paymentReferenceId = 'PAY' + Date.now().toString();
-          const paymentEntry = {
+          // const paymentEntry = {
+          //   amount: parseFloat(payment.amount),
+          //   date: payment.date ? new Date(payment.date) : new Date(),
+          //   method: payment.method.trim(),
+          //   submittedBy: payment.submittedBy.trim(),
+          //   remark: payment.remark ? payment.remark.trim() : '',
+          // };
+          // sellerPayment.payments.push(paymentEntry);
+
+          // Update PaymentsAccount
+          // Handle added, updated, and removed payments
+const paymentsAccount = await PaymentsAccount.findOne({ accountId: account.method.trim() }).session(session);
+if (!paymentsAccount) {
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(404).json({ message: `Payment account ${account.method.trim()} not found` });
+}
+
+// Map existing payments by referenceId for easy lookup
+const existingPaymentsMap = new Map(
+    paymentsAccount.paymentsOut.map((payment) => [payment.referenceId, payment])
+);
+
+// Update payments in PaymentsAccount
+for (const payment of payments) {
+    const referenceId = payment.referenceId || `PAY${Date.now()}`;
+    if (existingPaymentsMap.has(referenceId)) {
+        // Update existing payment
+        const existingPayment = existingPaymentsMap.get(referenceId);
+        existingPayment.amount = parseFloat(payment.amount);
+        existingPayment.date = payment.date ? new Date(payment.date) : new Date();
+        existingPayment.method = payment.method.trim();
+        existingPayment.submittedBy = payment.submittedBy.trim();
+        existingPayment.remark = payment.remark ? payment.remark.trim() : '';
+    } else {
+        // Add new payment
+        paymentsAccount.paymentsOut.push({
+            referenceId,
             amount: parseFloat(payment.amount),
             date: payment.date ? new Date(payment.date) : new Date(),
             method: payment.method.trim(),
             submittedBy: payment.submittedBy.trim(),
             remark: payment.remark ? payment.remark.trim() : '',
-          };
-          sellerPayment.payments.push(paymentEntry);
+        });
+    }
+}
 
-          // Update PaymentsAccount
-          const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
-          if (!paymentsAccount) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(404).json({ message: `Payment account ${payment.method.trim()} not found` });
-          }
-          paymentsAccount.paymentsOut.push({
-            amount: parseFloat(payment.amount),
-            method: payment.method.trim(),
-            remark: `Payment to supplier ${account.sellerName}`,
-            submittedBy: payment.submittedBy.trim(),
-            referenceId: paymentReferenceId,
-            date: payment.date ? new Date(payment.date) : new Date(),
-          });
-          await paymentsAccount.save({ session });
+// Handle removed payments
+const newPaymentIds = payments.map((payment) => payment.referenceId);
+paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
+    (existingPayment) => newPaymentIds.includes(existingPayment.referenceId)
+);
+
+await paymentsAccount.save({ session });
+
         }
 
-        // Handle removed payments in PaymentsAccount
-        for (const payment of removedPayments) {
-          const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
-          if (paymentsAccount) {
-            paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
-              (p) =>
-                !(
-                  p.amount === payment.amount &&
-                  p.date.getTime() === payment.date.getTime() &&
-                  p.submittedBy === payment.submittedBy &&
-                  p.remark === (payment.remark ? payment.remark.trim() : '')
-                )
-            );
-            await paymentsAccount.save({ session });
-          }
-        }
+        // // Handle removed payments in PaymentsAccount
+        // for (const payment of removedPayments) {
+        //   const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
+        //   if (paymentsAccount) {
+        //     paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
+        //       (p) =>
+        //         !(
+        //           p.amount === payment.amount &&
+        //           p.date.getTime() === payment.date.getTime() &&
+        //           p.submittedBy === payment.submittedBy &&
+        //           p.remark === (payment.remark ? payment.remark.trim() : '')
+        //         )
+        //     );
+        //     await paymentsAccount.save({ session });
+        //   }
+        // }
       }
 
       // Save the updated documents
