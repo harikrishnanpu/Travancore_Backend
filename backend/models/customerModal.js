@@ -94,6 +94,11 @@ const customerAccountSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    customerAddress: {
+      type: String,
+      trim: true,
+      required: true,
+    },
     bills: [billSchema], // Array of bills
     payments: [paymentSchema], // Array of payments
     totalBillAmount: {

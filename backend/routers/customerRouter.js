@@ -53,9 +53,11 @@ customerRouter.post(
       // Return the first validation error
       return res.status(400).json({ message: errors.array()[0].msg });
     }
+    const generateReferenceId = () => 'PAY' + Date.now().toString();
+    const referenceId = generateReferenceId();
 
     try {
-      const { customerName, bills, payments, userId, customerContactNumber } = req.body;
+      const { customerName, bills, payments, userId, customerContactNumber, customerId, customerAddress } = req.body;
 
       // Check if there are duplicate invoice numbers within the bills
       const invoiceNos = bills.map((bill) => bill.invoiceNo.trim());
@@ -67,7 +69,9 @@ customerRouter.post(
       // Create a new CustomerAccount instance
       const newCustomerAccount = new CustomerAccount({
         customerName: customerName.trim(),
-        customerContactNumber,
+        customerId: customerId.trim(),
+        customerContactNumber: customerContactNumber.trim(),
+        customerAddress: customerAddress.trim(),
         bills: bills.map((bill) => ({
           invoiceNo: bill.invoiceNo.trim(),
           billAmount: parseFloat(bill.billAmount),
@@ -76,12 +80,13 @@ customerRouter.post(
         payments: payments.map((payment) => ({
           amount: parseFloat(payment.amount),
           date: payment.date ? new Date(payment.date) : undefined,
-          submittedBy: payment.submittedBy.trim(),
+          submittedBy: userId,
+          method: payment.method,
+          referenceId: referenceId,
           remark: payment.remark ? payment.remark.trim() : '',
+          invoiceNo: payment.invoiceNo
         })),
-        userId, // Assuming userId is part of the CustomerAccount schema
       });
-
       // Save the new customer account to the database
       const savedAccount = await newCustomerAccount.save();
 
@@ -436,7 +441,7 @@ customerRouter.put(
               date: payment.date ? new Date(payment.date) : new Date(),
               submittedBy: payment.submittedBy.trim(),
               remark: payment.remark ? payment.remark.trim() : '',
-              referenceId,
+              referenceId: referenceId,
               method: payment.method ? payment.method.trim() : 'Cash',
               invoiceNo: payment.invoiceNo ? payment.invoiceNo.trim() : undefined,
             };
@@ -548,6 +553,51 @@ customerRouter.put(
           .status(400)
           .json({ message: 'Paid amount exceeds total bill amount' });
       }
+
+
+
+              // Recalculate balance
+  const paymentAccount = await PaymentsAccount.findOne({},null,{ session });
+  const billingSchemaAccount = await Billing.findOne({}, null, { session });
+
+  if (billingSchemaAccount) {
+    // Ensure payments array exists before reducing
+    billingSchemaAccount.billingAmountReceived = (billingSchemaAccount.payments || []).reduce(
+      (total, payment) => total + (payment.amount || 0),
+      0
+    );
+  
+    // Calculate net amount
+    const netAmount = billingSchemaAccount.grandTotal || 0;
+  
+    // Update payment status based on billing amount received
+    if (billingSchemaAccount.billingAmountReceived >= netAmount) {
+      billingSchemaAccount.paymentStatus = "Paid";
+    } else if (billingSchemaAccount.billingAmountReceived > 0) {
+      billingSchemaAccount.paymentStatus = "Partial";
+    } else {
+      billingSchemaAccount.paymentStatus = "Unpaid";
+    }
+  
+    // Save the updated document
+    await billingSchemaAccount.save({ session });
+  }  
+
+  if (paymentAccount) {
+    const totalIn = paymentAccount.paymentsIn.reduce(
+      (acc, payment) => acc + payment.amount,
+      0
+    );
+    const totalOut = paymentAccount.paymentsOut.reduce(
+      (acc, payment) => acc + payment.amount,
+      0
+    );
+
+    paymentAccount.balanceAmount = totalIn - totalOut;
+
+    // Save the updated balance
+    await paymentAccount.save({ session });
+  }
 
       // Save the updated account
       await account.save({ session });

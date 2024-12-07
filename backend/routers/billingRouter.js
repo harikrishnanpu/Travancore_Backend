@@ -1315,7 +1315,7 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
 
       if(billing){
 
-      lastGeneratedCustomer = await Billing.aggregate([
+      lastGeneratedCustomer = await CustomerAccount.aggregate([
         {
           $addFields: {
             numericId: {
@@ -1706,7 +1706,7 @@ billingRouter.get('/customer/suggestions', async (req, res) => {
     const regex = new RegExp(safeSearch, 'i');
 
     // Fetch matching customers using aggregation for deduplication
-    const customers = await Billing.aggregate([
+    const customers = await CustomerAccount.aggregate([
       {
         $match: {
           $or: [
