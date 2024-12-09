@@ -450,29 +450,39 @@ await paymentsAccount.save({ session });
 
 
 
-
 supplierRouter.get('/daily/payments', async (req, res) => {
   try {
-    const { date } = req.query;
+    const { fromDate, toDate } = req.query;
 
-    if (!date) {
-      return res.status(400).json({ message: 'Date is required' });
+    // Validate presence of both dates
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ message: 'Both fromDate and toDate are required.' });
     }
 
-    const selectedDate = new Date(date);
-    if (isNaN(selectedDate)) {
-      return res.status(400).json({ message: 'Invalid date format' });
+    // Convert to Date objects
+    const start = new Date(fromDate);
+    const end = new Date(toDate);
+
+    // Validate date formats
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ message: 'Invalid date format. Use YYYY-MM-DD.' });
     }
 
-    selectedDate.setUTCHours(0, 0, 0, 0);
-    const nextDate = new Date(selectedDate);
-    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    // Ensure fromDate is not after toDate
+    if (start > end) {
+      return res.status(400).json({ message: 'fromDate cannot be after toDate.' });
+    }
 
-    const sellers = await SupplierAccount.aggregate([
+    // Adjust end date to include the entire day
+    end.setHours(23, 59, 59, 999);
+    let suppliers = [];
+
+    // Aggregation pipeline
+     suppliers = await SupplierAccount.aggregate([
       { $unwind: '$payments' },
       {
         $match: {
-          'payments.date': { $gte: selectedDate, $lt: nextDate },
+          'payments.date': { $gte: start, $lte: end },
         },
       },
       {
@@ -482,12 +492,20 @@ supplierRouter.get('/daily/payments', async (req, res) => {
           payments: { $push: '$payments' },
         },
       },
+      {
+        $sort: { sellerName: 1 }, // Optional: Sort suppliers alphabetically
+      },
     ]);
 
-    res.json(sellers);
+    // Check if any suppliers have payments in the date range
+    // if (!suppliers || suppliers.length === 0) {
+    //   return res.status(404).json({ message: 'No supplier payments found within the specified date range.' });
+    // }
+
+    res.json(suppliers);
   } catch (error) {
-    console.error('Error fetching seller payments:', error);
-    res.status(500).json({ message: 'Error fetching seller payments' });
+    console.error('Error fetching supplier payments:', error);
+    res.status(500).json({ message: 'Internal Server Error while fetching supplier payments.' });
   }
 });
 

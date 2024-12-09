@@ -143,26 +143,37 @@ transportPaymentsRouter.post('/add-billing/:id', async (req, res) => {
 
 transportPaymentsRouter.get('/daily/payments', async (req, res) => {
   try {
-    const { date } = req.query;
+    const { fromDate, toDate } = req.query;
 
-    // Validate if date is provided
-    if (!date) {
-      return res.status(400).json({ message: 'Date is required' });
+    // Validate presence of both dates
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ message: 'Both fromDate and toDate are required.' });
     }
 
-    // Parse the date and define the start and end of the day in UTC
-    const selectedDate = new Date(date);
-    selectedDate.setUTCHours(0, 0, 0, 0);
+    // Convert to Date objects
+    const start = new Date(fromDate);
+    const end = new Date(toDate);
 
-    const nextDate = new Date(selectedDate);
-    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    // Validate date formats
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ message: 'Invalid date format. Use YYYY-MM-DD.' });
+    }
 
-    // Use aggregation to unwind payments and filter by date
-    const transports = await TransportPayment.aggregate([
+    // Ensure fromDate is not after toDate
+    if (start > end) {
+      return res.status(400).json({ message: 'fromDate cannot be after toDate.' });
+    }
+
+    // Adjust end date to include the entire day
+    end.setHours(23, 59, 59, 999);
+
+    let transports = [];
+    // Aggregation pipeline to filter payments within the date range
+     transports = await TransportPayment.aggregate([
       { $unwind: '$payments' },
       {
         $match: {
-          'payments.date': { $gte: selectedDate, $lt: nextDate },
+          'payments.date': { $gte: start, $lte: end },
         },
       },
       {
@@ -172,15 +183,22 @@ transportPaymentsRouter.get('/daily/payments', async (req, res) => {
           payments: { $push: '$payments' },
         },
       },
+      {
+        $sort: { transportName: 1 }, // Optional: Sort transports alphabetically
+      },
     ]);
+
+    // Check if any transports have payments in the date range
+    // if (!transports || transports.length === 0) {
+    //   return res.status(404).json({ message: 'No transport payments found within the specified date range.' });
+    // }
 
     res.json(transports);
   } catch (error) {
     console.error('Error fetching transport payments:', error);
-    res.status(500).json({ message: 'Error fetching transport payments' });
+    res.status(500).json({ message: 'Internal Server Error while fetching transport payments.' });
   }
 });
-
 
 // Get All Transport Payments
 transportPaymentsRouter.get('/all', async (req, res) => {
