@@ -156,7 +156,7 @@ transactionRouter.post('/transactions', async (req, res) => {
       myAccount.balanceAmount += parsedAmount; // Update balance
     } else if (type === 'out') {
       // Payment Out
-      const referenceId = uuidv4(); // Generate unique referenceId
+      const referenceId = 'OUT' + Date.now().toString();
 
       accountPaymentEntry = {
         amount: parsedAmount,
