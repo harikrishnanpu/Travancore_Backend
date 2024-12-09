@@ -171,9 +171,9 @@ transactionRouter.post('/transactions', async (req, res) => {
       myAccount.balanceAmount -= parsedAmount; // Update balance
 
       // Optional: Check for negative balance
-      if (myAccount.balanceAmount < 0) {
-        return res.status(400).json({ message: 'Insufficient funds in the payment account.' });
-      }
+      // if (myAccount.balanceAmount < 0) {
+      //   return res.status(400).json({ message: 'Insufficient funds in the payment account.' });
+      // }
     } else if (type === 'transfer') {
       // Transfer
       // paymentFrom and paymentTo are accountIds
