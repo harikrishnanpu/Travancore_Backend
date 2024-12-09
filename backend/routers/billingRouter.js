@@ -1580,91 +1580,324 @@ billingRouter.get('/deliveries/all', async (req, res) => {
 });
 
 
-// PUT /api/users/billing/update-delivery
-billingRouter.put('/update-delivery/update', async (req, res) => {
+
+
+// DELETE /api/billing/deliveries/:deliveryId
+billingRouter.delete('/deliveries/:deliveryId', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    console.log('Received update request:', req.body); // Debugging log
+    const { deliveryId } = req.params;
+
+    if (!deliveryId) {
+      throw new Error('Delivery ID is required.');
+    }
+
+    // Find the Billing document containing the delivery
+    const billing = await Billing.findOne({ 'deliveries.deliveryId': deliveryId }).session(session);
+    if (!billing) {
+      throw new Error('Billing document not found.');
+    }
+
+    // Find the specific delivery entry
+    const delivery = billing.deliveries.find(d => d.deliveryId === deliveryId);
+    if (!delivery) {
+      throw new Error('Delivery not found.');
+    }
+
+    // Reset delivered quantities to 0 for associated products
+    delivery.productsDelivered.forEach(dp => {
+      const product = billing.products.find(p => p.item_id === dp.item_id);
+      if (product) {
+        product.deliveredQuantity = 0;
+        product.deliveryStatus = "Pending";
+      }
+    });
+
+    // Remove the delivery from the deliveries array
+    billing.deliveries = billing.deliveries.filter(d => d.deliveryId !== deliveryId);
+
+    // Remove associated paymentsOut from PaymentsAccount
+    if (delivery.method && delivery.method.trim()) {
+      const expenseMethod = delivery.method.trim();
+      const account = await PaymentsAccount.findOne({ accountId: expenseMethod }).session(session);
+      if (account) {
+        // Remove paymentsOut related to this delivery
+        const fuelRefId = `FUEL-${deliveryId}`;
+        const expenseRefIds = delivery.otherExpenses.map(e => `EXP-${e._id}`);
+
+        account.paymentsOut = account.paymentsOut.filter(
+          pay => pay.referenceId !== fuelRefId && !expenseRefIds.includes(pay.referenceId)
+        );
+
+        await account.save({ session });
+      }
+    }
+
+    // Remove the delivery's otherExpenses from billing.otherExpenses
+    billing.otherExpenses = billing.otherExpenses.filter(exp => {
+      // Keep expenses not related to this delivery
+      return !delivery.otherExpenses.some(dExp => String(dExp._id) === String(exp._id));
+    });
+
+    // Recalculate overall delivery status
+    await billing.updateDeliveryStatus();
+
+    // Save the updated Billing document
+    await billing.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(200).json({ message: 'Delivery deleted successfully and related data updated.' });
+  } catch (error) {
+    console.error('Error deleting delivery:', error);
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
+    res.status(500).json({ message: error.message || 'Error deleting delivery.' });
+  }
+});
+
+
+// PUT /api/users/billing/update-delivery
+
+billingRouter.put('/update-delivery/update', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    console.log('Received update request:', req.body);
 
     const {
       deliveryId,
       startingKm,
       endKm,
-      kmTravelled = 0,
-      fuelCharge = 0,
-      newOtherExpense, // { amount, remark } for the new other expense
+      fuelCharge,
+      method, // Payment method for expenses (optional)
+      updatedOtherExpenses = [],
+      deliveredProducts = [],
     } = req.body;
 
     // Validate required fields
     if (!deliveryId) {
-      return res.status(400).json({ message: 'Delivery ID is required.' });
-    }
-
-    if (newOtherExpense && newOtherExpense.amount <= 0) {
-      return res.status(400).json({ message: 'Invalid other expense amount.' });
+      throw new Error('Delivery ID is required.');
     }
 
     // Find the Billing document containing the delivery
-    const billing = await Billing.findOne({ 'deliveries.deliveryId': deliveryId });
+    const billing = await Billing.findOne({ 'deliveries.deliveryId': deliveryId }).session(session);
     if (!billing) {
-      return res.status(404).json({ message: 'Billing document not found.' });
+      throw new Error('Billing document not found.');
     }
 
     // Find the specific delivery entry
     const delivery = billing.deliveries.find((d) => d.deliveryId === deliveryId);
     if (!delivery) {
-      return res.status(404).json({ message: 'Delivery not found.' });
+      throw new Error('Delivery not found.');
     }
 
-    // Update the delivery fields
-    if (startingKm !== undefined) {
-      const parsedStartingKm = parseFloat(startingKm);
-      if (!isNaN(parsedStartingKm)) {
-        delivery.startingKm = parsedStartingKm;
+    // Update startingKm, endKm if provided and valid
+    if (startingKm !== undefined && !isNaN(parseFloat(startingKm))) {
+      delivery.startingKm = parseFloat(startingKm);
+    }
+
+    if (endKm !== undefined && !isNaN(parseFloat(endKm))) {
+      delivery.endKm = parseFloat(endKm);
+    }
+
+    // Recalculate kmTravelled
+    if (!isNaN(delivery.startingKm) && !isNaN(delivery.endKm)) {
+      delivery.kmTravelled = delivery.endKm - delivery.startingKm;
+      if (delivery.kmTravelled < 0) {
+        throw new Error("endKm cannot be less than startingKm.");
       }
     }
 
-    if (endKm !== undefined) {
-      const parsedEndKm = parseFloat(endKm);
-      if (!isNaN(parsedEndKm)) {
-        delivery.endKm = parsedEndKm;
-      }
-    }
-
-    if (kmTravelled !== undefined && !isNaN(parseFloat(kmTravelled))) {
-      delivery.kmTravelled += parseFloat(kmTravelled);
-    }
-
+    // Update fuelCharge
     if (fuelCharge !== undefined && !isNaN(parseFloat(fuelCharge))) {
-      delivery.fuelCharge += parseFloat(fuelCharge);
-      billing.fuelCharge += parseFloat(fuelCharge);
+      delivery.fuelCharge = parseFloat(fuelCharge);
+      billing.fuelCharge = parseFloat(fuelCharge);
     }
 
-    if (newOtherExpense && newOtherExpense.amount > 0) {
-      const parsedAmount = parseFloat(newOtherExpense.amount);
-      if (!isNaN(parsedAmount)) {
-        const expenseEntry = {
-          amount: parsedAmount,
-          remark: newOtherExpense.remark || 'No remark provided',
-          date: new Date(),
-        };
+    // Update Delivered Products Quantities
+    if (!Array.isArray(deliveredProducts)) {
+      throw new Error("deliveredProducts must be an array.");
+    }
 
-        // Add the new other expense to the delivery's otherExpenses
-        delivery.otherExpenses.push(expenseEntry);
-
-        // Add to the top-level billing otherExpenses
-        billing.otherExpenses.push(expenseEntry);
+    for (const dp of deliveredProducts) {
+      const { item_id, deliveredQuantity } = dp;
+      if (!item_id || typeof deliveredQuantity !== 'number' || deliveredQuantity < 0) {
+        throw new Error("Each deliveredProduct must have a valid item_id and a non-negative deliveredQuantity.");
       }
+
+      const product = billing.products.find(p => p.item_id === item_id);
+      if (!product) {
+        throw new Error(`Product with item_id ${item_id} not found in billing.`);
+      }
+
+      if (deliveredQuantity > product.quantity) {
+        throw new Error(`Delivered quantity for product ${item_id} exceeds the ordered quantity.`);
+      }
+
+      product.deliveredQuantity = deliveredQuantity;
+      // Update product deliveryStatus
+      if (deliveredQuantity === product.quantity) {
+        product.deliveryStatus = "Delivered";
+      } else if (deliveredQuantity > 0 && deliveredQuantity < product.quantity) {
+        product.deliveryStatus = "Partially Delivered";
+      } else {
+        product.deliveryStatus = "Pending";
+      }
+
+      // Update delivery.productsDelivered
+      const deliveredProduct = delivery.productsDelivered.find(p => p.item_id === item_id);
+      if (deliveredProduct) {
+        deliveredProduct.deliveredQuantity = deliveredQuantity;
+      } else {
+        delivery.productsDelivered.push({
+          item_id,
+          deliveredQuantity,
+        });
+      }
+    }
+
+    // Process updated other expenses (Full CRUD)
+    const existingExpenseIds = delivery.otherExpenses.map(e => e._id.toString());
+    const updatedExpenseIds = updatedOtherExpenses.filter(exp => exp.id).map(exp => exp.id.toString());
+    const expensesToRemoveIds = existingExpenseIds.filter(id => !updatedExpenseIds.includes(id));
+
+    // Remove old expenses not in updated list
+    if (expensesToRemoveIds.length > 0) {
+      delivery.otherExpenses = delivery.otherExpenses.filter(e => !expensesToRemoveIds.includes(e._id.toString()));
+      billing.otherExpenses = billing.otherExpenses.filter(e => !expensesToRemoveIds.includes(e._id.toString()));
+    }
+
+    // Add or update expenses
+    for (const expense of updatedOtherExpenses) {
+      const parsedAmount = parseFloat(expense.amount);
+      if (isNaN(parsedAmount) || parsedAmount < 0) {
+        throw new Error("Expense amount must be a non-negative number.");
+      }
+
+      if (expense.id) {
+        // Update existing expense by id
+        const existingExpense = delivery.otherExpenses.find((e) => e._id.toString() === expense.id.toString());
+        if (!existingExpense) {
+          throw new Error(`Expense with id ${expense.id} not found in this delivery.`);
+        }
+        existingExpense.amount = parsedAmount;
+        existingExpense.remark = expense.remark || existingExpense.remark;
+        if (method && method.trim()) {
+          existingExpense.method = method.trim();
+        }
+
+        // Update top-level billing.otherExpenses
+        const billingExpense = billing.otherExpenses.find((e) => e._id.toString() === expense.id.toString());
+        if (billingExpense) {
+          billingExpense.amount = parsedAmount;
+          billingExpense.remark = expense.remark || billingExpense.remark;
+          if (method && method.trim()) {
+            billingExpense.method = method.trim();
+          }
+        }
+
+      } else {
+        // Add new expense
+        const newExpenseId = new mongoose.Types.ObjectId();
+        const newExpense = {
+          _id: newExpenseId,
+          amount: parsedAmount,
+          remark: expense.remark || 'No remark provided',
+          date: new Date(),
+          method: method && method.trim() ? method.trim() : undefined,
+        };
+        delivery.otherExpenses.push(newExpense);
+        billing.otherExpenses.push(newExpense);
+      }
+    }
+
+    // Recalculate overall delivery status
+    await billing.updateDeliveryStatus();
+
+    // If a method is provided, update PaymentsAccount with fuelCharge & otherExpenses
+    if (method && method.trim()) {
+      const expenseMethod = method.trim();
+      const account = await PaymentsAccount.findOne({ accountId: expenseMethod }).session(session);
+      if (!account) {
+        throw new Error('Payment account not found for the given method.');
+      }
+
+      // Handle Fuel Charge
+      const fuelRefId = `FUEL-${deliveryId}`;
+      account.paymentsOut = account.paymentsOut.filter((pay) => pay.referenceId !== fuelRefId);
+      if (delivery.fuelCharge > 0) {
+        account.paymentsOut.push({
+          amount: delivery.fuelCharge,
+          method: expenseMethod,
+          referenceId: fuelRefId,
+          remark: `Fuel charge for delivery ${deliveryId}`,
+          submittedBy: delivery.userId || "system",
+          date: new Date(),
+        });
+      }
+
+      // Handle Other Expenses
+      const currentExpenseRefs = delivery.otherExpenses.map(e => `EXP-${e._id}`);
+      account.paymentsOut = account.paymentsOut.filter(pay => {
+        if (pay.referenceId.startsWith("EXP-")) {
+          return currentExpenseRefs.includes(pay.referenceId);
+        }
+        return true;
+      });
+
+      for (const exp of delivery.otherExpenses) {
+        if (exp.amount > 0) {
+          const expenseRefId = `EXP-${exp._id}`;
+          const existingPaymentIndex = account.paymentsOut.findIndex(pay => pay.referenceId === expenseRefId);
+          if (existingPaymentIndex >= 0) {
+            // Update existing paymentOut
+            account.paymentsOut[existingPaymentIndex].amount = exp.amount;
+            account.paymentsOut[existingPaymentIndex].method = expenseMethod;
+            account.paymentsOut[existingPaymentIndex].remark = `Expense (${exp.remark}) for delivery ${deliveryId}`;
+            account.paymentsOut[existingPaymentIndex].submittedBy = delivery.userId || "system";
+            account.paymentsOut[existingPaymentIndex].date = new Date();
+          } else {
+            // Add new paymentOut
+            account.paymentsOut.push({
+              amount: exp.amount,
+              method: expenseMethod,
+              referenceId: expenseRefId,
+              remark: `Expense (${exp.remark}) for delivery ${deliveryId}`,
+              submittedBy: delivery.userId || "system",
+              date: new Date(),
+            });
+          }
+        }
+      }
+
+      await account.save({ session });
     }
 
     // Save the updated Billing document
-    await billing.save();
+    await billing.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(200).json({ message: 'Delivery and billing updated successfully.', data: billing });
   } catch (error) {
     console.error('Error updating delivery and billing:', error);
-    res.status(500).json({ message: 'Error updating delivery and billing.' });
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
+    res.status(500).json({ message: error.message || 'Error updating delivery and billing.' });
   }
 });
+
+
 
 
 billingRouter.post('/bill/cancel', async (req, res) => {

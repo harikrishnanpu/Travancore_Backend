@@ -32,9 +32,11 @@ const BillingSchema = new mongoose.Schema(
     remark: { type: String, default: "" },
     otherExpenses: [
       {
+        _id: { type: mongoose.Schema.Types.ObjectId, default: () => new mongoose.Types.ObjectId() },
         amount: { type: Number },
         remark: { type: String },
         date: { type: Date, default: Date.now },
+        method: { type: String}
       },
     ],
     products: [
@@ -96,10 +98,13 @@ const BillingSchema = new mongoose.Schema(
         startingKm: Number,
         endKm: Number,
         fuelCharge: Number,
+        method: String,
         otherExpenses: [
           {
+            _id: { type: mongoose.Schema.Types.ObjectId, default: () => new mongoose.Types.ObjectId() },
             amount: Number,
             remark: String,
+            method: String,
             date: { type: Date, default: Date.now }, // Added date field
           },
         ],
