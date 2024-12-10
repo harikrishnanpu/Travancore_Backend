@@ -1280,7 +1280,7 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
     return res.status(400).json({ error: 'invoiceNo and products are required' });
   }
 
-  // Extract delivery dates
+  // Extract and format delivery dates
   const deliveryDates = deliveries
     .filter(d => d && d.startLocations && d.startLocations.length > 0)
     .map(d => d.startLocations[0].timestamp)
@@ -1291,13 +1291,11 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
   // Format payment details
   const totalAmountPaid = billingAmountReceived || 0;
   const paymentDetails = payments.map((p) => {
-    return `Paid: Rs. ${parseFloat(p.amount).toFixed(2)}, Method: ${p.method}, Ref: ${p.referenceId}, Date: ${p.date ? new Date(p.date).toLocaleDateString() : 'N/A'}`;
+    return `Paid: Rs. ${parseFloat(p.amount).toFixed(2)}, Method: ${safeGet(p.method)}, Ref: ${safeGet(p.referenceId)}, Date: ${p.date ? new Date(p.date).toLocaleDateString() : 'N/A'}`;
   });
 
-  const productsPerPage = 15; // fewer items per page for readability
+  const productsPerPage = 15; // Adjust as needed
   const totalPages = Math.ceil(products.length / productsPerPage);
-
-  const safeGet = (value) => (value ? value : 'N/A');
 
   const generatePageHTML = (productsChunk, pageNumber, totalPages) => {
     let rowsHTML = productsChunk.map((product, index) => {
@@ -1462,157 +1460,153 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
     `;
   };
 
-  const fullHTMLContentPages = [];
+  // Generate the full HTML content for all pages
+  let combinedHTMLContent = '';
   for (let i = 0; i < totalPages; i++) {
     const productsChunk = products.slice(i * productsPerPage, (i + 1) * productsPerPage);
-    fullHTMLContentPages.push(generatePageHTML(productsChunk, i + 1, totalPages));
+    combinedHTMLContent += generatePageHTML(productsChunk, i + 1, totalPages);
   }
 
   const fullHTMLContent = `
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-      <title>Loading Slip - ${invoiceNo}</title>
-      <style>
-        body {
-          font-family: Arial, sans-serif;
-          background: #f9f9f9;
-          margin: 0;
-          padding: 0;
-          font-size: 10px;
-        }
-        .loading-slip {
-          background-color: #fff;
-          width: 95%;
-          max-width: 1000px;
-          margin: 20px auto;
-          padding: 20px;
-          border-radius: 10px;
-          box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-          page-break-after: always;
-        }
-        .header {
-          background-color: #960101; /* Dark Red */
-          padding: 10px;
-          color: #fff;
-          text-align: center;
-          border-top-left-radius: 10px;
-          border-top-right-radius: 10px;
-        }
-        .header h1 {
-          margin-bottom: 5px;
-          font-size: 16px;
-          font-weight: bold;
-        }
-        .sub-header {
-          font-size: 10px;
-          font-weight: 700;
-        }
-        .info-section {
-          display: flex;
-          justify-content: space-between;
-          margin-top: 10px;
-          padding-bottom: 10px;
-          border-bottom: 1px solid #e0e0e0;
-        }
-        .info-section .left-info, .info-section .right-info {
-          width: 48%;
-        }
-        .info-section p {
-          margin: 2px 0;
-        }
-        .loading-slip-title {
-          text-align: center;
-          margin-top: 10px;
-        }
-        .loading-slip-title h2 {
-          font-size: 12px;
-          color: #960101;
-          text-transform: uppercase;
-          margin-bottom: 5px;
-        }
-        .payment-details {
-          margin-top: 10px;
-          font-size: 9px;
-          line-height: 1.2em;
-        }
-        .payment-details p {
-          margin: 2px 0;
-        }
-        .products-table {
-          width: 100%;
-          border-collapse: collapse;
-          margin-top: 10px;
-          font-size: 9px;
-        }
-        .products-table th {
-          background-color: #f4cccc;
-          color: #960101;
-          padding: 4px;
-          border: 1px solid #ddd;
-          text-align: center;
-        }
-        .products-table td {
-          padding: 4px;
-          text-align: center;
-          border: 1px solid #ddd;
-          color: #333;
-          font-size: 9px;
-        }
-        .footer-section {
-          text-align: center;
-          margin-top: 10px;
-          font-size: 8px;
-          color: #777;
-        }
-        .footer-section .disclaimer {
-          font-style: italic;
-          margin-top: 5px;
-        }
-
-        @media print {
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <title>Loading Slip - ${invoiceNo}</title>
+        <style>
           body {
-            margin:0;
-            padding:0;
+            font-family: Arial, sans-serif;
+            background: #f9f9f9;
+            margin: 0;
+            padding: 0;
+            font-size: 10px;
           }
           .loading-slip {
+            background-color: #fff;
+            width: 95%;
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
             page-break-after: always;
           }
-          .footer-section {
-            page-break-inside: avoid;
+          .header {
+            background-color: #960101; /* Dark Red */
+            padding: 10px;
+            color: #fff;
+            text-align: center;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
           }
-        }
-      </style>
-    </head>
-    <body>
-      ${fullHTMLContentPages.join('')}
-    </body>
-  </html>
+          .header h1 {
+            margin-bottom: 5px;
+            font-size: 16px;
+            font-weight: bold;
+          }
+          .sub-header {
+            font-size: 10px;
+            font-weight: 700;
+          }
+          .info-section {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e0e0e0;
+          }
+          .info-section .left-info, .info-section .right-info {
+            width: 48%;
+          }
+          .info-section p {
+            margin: 2px 0;
+          }
+          .loading-slip-title {
+            text-align: center;
+            margin-top: 10px;
+          }
+          .loading-slip-title h2 {
+            font-size: 12px;
+            color: #960101;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+          }
+          .payment-details {
+            margin-top: 10px;
+            font-size: 9px;
+            line-height: 1.2em;
+          }
+          .payment-details p {
+            margin: 2px 0;
+          }
+          .products-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 9px;
+          }
+          .products-table th {
+            background-color: #f4cccc;
+            color: #960101;
+            padding: 4px;
+            border: 1px solid #ddd;
+            text-align: center;
+          }
+          .products-table td {
+            padding: 4px;
+            text-align: center;
+            border: 1px solid #ddd;
+            color: #333;
+            font-size: 9px;
+          }
+          .footer-section {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 8px;
+            color: #777;
+          }
+          .footer-section .disclaimer {
+            font-style: italic;
+            margin-top: 5px;
+          }
+
+          @media print {
+            body {
+              margin:0;
+              padding:0;
+            }
+            .loading-slip {
+              page-break-after: always;
+            }
+            .footer-section {
+              page-break-inside: avoid;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        ${combinedHTMLContent}
+        <script>
+          window.onload = function() {
+            window.print();
+          };
+        </script>
+      </body>
+    </html>
   `;
 
   try {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    await page.setContent(fullHTMLContent, { waitUntil: 'networkidle' });
+    // Optionally, save the loading slip HTML to a file or log if needed
+    // Generate QR Code as Data URL (if needed)
+    // const qrCodeDataURL = await QRCode.toDataURL(NewQrCodeId); // Adjust as per requirement
 
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: { top: '20px', bottom: '20px', left: '10px', right: '10px' },
-    });
-
-    await browser.close();
-
-    // Send the PDF as a response
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename=LoadingSlip_${invoiceNo}.pdf`);
-    res.setHeader('Content-Length', pdfBuffer.length);
-    res.end(pdfBuffer);
+    // Send the HTML directly with print onload
+    res.setHeader('Content-Type', 'text/html');
+    res.send(fullHTMLContent);
   } catch (error) {
-    console.error('Error generating Loading Slip PDF:', error);
-    res.status(500).json({ error: 'Failed to generate Loading Slip PDF' });
+    console.error('Error generating Loading Slip HTML:', error);
+    res.status(500).json({ error: 'Failed to generate Loading Slip HTML' });
   }
 });
 
@@ -1702,6 +1696,11 @@ printRouter.post('/generate-leave-application-pdf', async (req, res) => {
         margin-top: 50px;
       }
     </style>
+    <script>
+      window.onload = () => {
+        window.print();
+      };
+    </script>
   </head>
   <body>
     <div class="header">
@@ -1739,27 +1738,9 @@ printRouter.post('/generate-leave-application-pdf', async (req, res) => {
   </html>
   `;
 
-  try {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    await page.setContent(htmlContent, { waitUntil: 'networkidle' });
-
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' },
-    });
-
-    await browser.close();
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename=Leave_${_id}.pdf`);
-    res.setHeader('Content-Length', pdfBuffer.length);
-    res.end(pdfBuffer);
-  } catch (error) {
-    console.error('Error generating leave application PDF:', error);
-    res.status(500).json({ error: 'Failed to generate leave application PDF' });
-  }
+  // Return the HTML directly
+  res.setHeader('Content-Type', 'text/html');
+  res.send(htmlContent);
 });
 
 
