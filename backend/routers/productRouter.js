@@ -11,6 +11,10 @@ import SellerPayment from '../models/sellerPayments.js';
 import TransportPayment from '../models/transportPayments.js';
 import SupplierAccount from '../models/supplierAccountModal.js';
 import Transportation from '../models/transportModal.js';
+import Billing from '../models/billingModal.js';
+import Return from '../models/returnModal.js';
+import Damage from '../models/damageModal.js';
+import StockOpening from '../models/stockOpeningModal.js';
 
 
 const productRouter = express.Router();
@@ -342,8 +346,22 @@ productRouter.put('/update-stock/:id', async (req, res) => {
       return res.status(404).json({ message: 'Product not found' });
     }
 
+
+      // Create log entry
+  const logEntry = new StockOpening({
+    item_id: product.item_id,
+    name: product.name,
+    quantity: countInStock,
+    submittedBy: 'Bill Opening',
+    remark: 'Bill Opening',
+    date: new Date(),
+  });
+
+  await logEntry.save();
+
     res.json(product);
   } catch (error) {
+    console.log(error)
     res.status(500).json({ message: 'Error updating product stock' });
   }
 });
@@ -1326,6 +1344,149 @@ productRouter.get('/lastadded/id', async (req, res) => {
     res.status(500).json({ message: 'Error fetching last order' });
   }
 });
+
+
+
+
+productRouter.get(
+  '/stock/stock-logs',
+  asyncHandler(async (req, res) => {
+    try {
+      // Fetch all related data in parallel
+      const [billings, purchases, returns, damages, openings, products] = await Promise.all([
+        Billing.find().lean(),
+        Purchase.find().lean(),
+        Return.find().lean(),
+        Damage.find().lean(),
+        StockOpening.find().lean(),
+        Product.find().lean(),
+      ]);
+
+      // Create a quick-lookup map for product details
+      const productMap = {};
+      for (const p of products) {
+        productMap[p.item_id] = p;
+      }
+
+      // Each log entry structure:
+      // {
+      //   date: Date,
+      //   itemId: String,
+      //   name: String,
+      //   brand: String,
+      //   category: String,
+      //   changeType: "Sales (Billing)" | "Purchase" | "Return" | "Damage" | "Opening Stock",
+      //   invoiceNo: String or null,
+      //   quantityChange: Number,
+      //   finalStock: Number (current countInStock)
+      // }
+
+      // Billing (Sales) Logs: products sold reduce stock
+      const billingLogs = billings.flatMap((b) =>
+        b.products.map((prod) => {
+          const pInfo = productMap[prod.item_id] || {};
+          return {
+            date: b.createdAt,
+            itemId: prod.item_id,
+            name: pInfo.name || prod.name,
+            brand: pInfo.brand || prod.brand,
+            category: pInfo.category || prod.category,
+            changeType: 'Sales (Billing)',
+            invoiceNo: b.invoiceNo,
+            quantityChange: -Math.abs(prod.quantity),
+            finalStock: pInfo.countInStock || 0,
+          };
+        })
+      );
+
+      // Purchase Logs: purchased items increase stock
+      const purchaseLogs = purchases.flatMap((pur) =>
+        pur.items.map((item) => {
+          const pInfo = productMap[item.itemId] || {};
+          return {
+            date: pur.createdAt,
+            itemId: item.itemId,
+            name: pInfo.name || item.name,
+            brand: pInfo.brand || item.brand,
+            category: pInfo.category || item.category,
+            changeType: 'Purchase',
+            invoiceNo: pur.invoiceNo,
+            quantityChange: Math.abs(item.quantity),
+            finalStock: pInfo.countInStock || 0,
+          };
+        })
+      );
+
+      // Return Logs: returned items add back to stock
+      const returnLogs = returns.flatMap((r) =>
+        r.products.map((prod) => {
+          const pInfo = productMap[prod.item_id] || {};
+          return {
+            date: r.createdAt,
+            itemId: prod.item_id,
+            name: pInfo.name || prod.name,
+            brand: pInfo.brand || '',
+            category: pInfo.category || '',
+            changeType: 'Return',
+            invoiceNo: r.returnNo,
+            quantityChange: Math.abs(prod.quantity),
+            finalStock: pInfo.countInStock || 0,
+          };
+        })
+      );
+
+      // Damage Logs: damaged items reduce stock
+      const damageLogs = damages.flatMap((d) =>
+        d.damagedItems.map((item) => {
+          const pInfo = productMap[item.item_id] || {};
+          return {
+            date: d.createdAt,
+            itemId: item.item_id,
+            name: pInfo.name || item.name,
+            brand: pInfo.brand || '',
+            category: pInfo.category || '',
+            changeType: 'Damage',
+            invoiceNo: null,
+            quantityChange: -Math.abs(item.quantity),
+            finalStock: pInfo.countInStock || 0,
+          };
+        })
+      );
+
+      // Opening Stock Logs: initial or manually added opening stocks
+      const openingLogs = openings.map((o) => {
+        const pInfo = productMap[o.item_id] || {};
+        return {
+          date: o.createdAt,
+          itemId: o.item_id,
+          name: pInfo.name || o.name,
+          brand: pInfo.brand || '',
+          category: pInfo.category || '',
+          changeType: 'Opening Stock',
+          invoiceNo: null,
+          quantityChange: Math.abs(o.quantity),
+          finalStock: pInfo.countInStock || 0,
+        };
+      });
+
+      let logs = [
+        ...billingLogs,
+        ...purchaseLogs,
+        ...returnLogs,
+        ...damageLogs,
+        ...openingLogs,
+      ];
+
+      // Sort logs by date ascending by default
+      logs = logs.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      res.json(logs);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Failed to fetch stock logs.' });
+    }
+  })
+);
 
 
 

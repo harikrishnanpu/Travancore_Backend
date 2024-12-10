@@ -26,6 +26,8 @@ import transportPaymentsRouter from './routers/transportPaymentsRouter.js';
 import siteReportRouter from './routers/siteReportRouter.js';
 import customerRouter from './routers/customerRouter.js';
 import supplierRouter from './routers/supplierRouter.js';
+import stockUpdateRouter from './routers/stockUpdateRouter.js';
+import leaveApplicationRouter from './routers/leaveApplicationRouter.js';
 
 
 dotenv.config();
@@ -56,6 +58,8 @@ app.use('/api/site-report', siteReportRouter);
 app.use('/api/customer', customerRouter);
 app.use('/api/seller', supplierRouter);
 app.use('/api/transport-payments', transportPaymentsRouter);
+app.use('/api/stock-update', stockUpdateRouter);
+app.use('/api/leaves', leaveApplicationRouter);
 
 
 

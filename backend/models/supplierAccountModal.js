@@ -20,6 +20,7 @@ const supplierAccountSchema = new mongoose.Schema(
     sellerId: { type: String, unique: true, required: true },
     sellerName: { type: String, required: true },
     sellerAddress: { type: String, required: true },
+    sellerGst : { type: String, required: true },
     bills: [billSchema], // Array of bills
     payments: [paymentSchema], // Array of payments
     totalBillAmount: { type: Number, default: 0 },

@@ -9,6 +9,8 @@ const damagedItemSchema = new mongoose.Schema({
 
 const damageSchema = new mongoose.Schema({
   userName: { type: String, required: true },
+  remark: { type: String },
+  date: { type: Date, default: Date.now() },
   damagedItems: [damagedItemSchema],
 }, { timestamps: true });
 

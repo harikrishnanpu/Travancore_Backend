@@ -23,6 +23,7 @@ supplierRouter.post(
         bills,
         payments,
         sellerAddress,
+        sellerGst,
         sellerId,
       } = req.body;
 
@@ -38,6 +39,7 @@ supplierRouter.post(
         sellerId: sellerId.trim(),
         sellerName: sellerName.trim(),
         sellerAddress: sellerAddress.trim(),
+        sellerGst : sellerGst.trim(),
         bills: bills.map((bill) => ({
           invoiceNo: bill.invoiceNo.trim(),
           billAmount: parseFloat(bill.billAmount),

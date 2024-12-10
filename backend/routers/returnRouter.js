@@ -146,7 +146,7 @@ returnRouter.post('/create', async (req, res) => {
 
   // POST /api/damage/create
 returnRouter.post('/damage/create', async (req, res) => {
-    const { userName, damagedItems } = req.body;
+    const { userName, damagedItems, remark } = req.body;
 
     if (!userName || damagedItems.length === 0) {
       return res.status(400).json({ message: 'User name and damaged items are required.' });
@@ -156,6 +156,7 @@ returnRouter.post('/damage/create', async (req, res) => {
       // Save the damage bill
       const damage = new Damage({
         userName,
+        remark,
         damagedItems
       });
       await damage.save();

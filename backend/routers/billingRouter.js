@@ -7,6 +7,7 @@ import Purchase from '../models/purchasemodals.js';
 import User from '../models/userModel.js';
 import PaymentsAccount from '../models/paymentsAccountModal.js';
 import CustomerAccount from '../models/customerModal.js';
+import SupplierAccount from '../models/supplierAccountModal.js';
 
 const billingRouter = express.Router();
 
@@ -1483,7 +1484,7 @@ billingRouter.get('/purchases/suggestions', async (req, res) => {
     }
 
     // Use aggregation to group by sellerId and ensure uniqueness
-    const sellers = await Purchase.aggregate([
+    const sellers = await SupplierAccount.aggregate([
       {
         $match: {
           sellerName: { $regex: searchTerm, $options: 'i' }

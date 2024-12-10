@@ -1259,6 +1259,513 @@ function generateReturnInvoiceHTML(returnData, qrCodeDataURL) {
 }
 
 
+printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
+  const {
+    invoiceNo,
+    customerName,
+    customerAddress,
+    customerContactNumber,
+    marketedBy,
+    salesmanName,
+    invoiceDate,
+    expectedDeliveryDate,
+    deliveryStatus,
+    billingAmountReceived,
+    payments = [],
+    deliveries = [],
+    products = [],
+  } = req.body || {};
+
+  if (!invoiceNo || !Array.isArray(products)) {
+    return res.status(400).json({ error: 'invoiceNo and products are required' });
+  }
+
+  // Extract delivery dates
+  const deliveryDates = deliveries
+    .filter(d => d && d.startLocations && d.startLocations.length > 0)
+    .map(d => d.startLocations[0].timestamp)
+    .filter(date => date)
+    .sort((a, b) => new Date(a) - new Date(b))
+    .map(date => new Date(date).toLocaleDateString());
+
+  // Format payment details
+  const totalAmountPaid = billingAmountReceived || 0;
+  const paymentDetails = payments.map((p) => {
+    return `Paid: Rs. ${parseFloat(p.amount).toFixed(2)}, Method: ${p.method}, Ref: ${p.referenceId}, Date: ${p.date ? new Date(p.date).toLocaleDateString() : 'N/A'}`;
+  });
+
+  const productsPerPage = 15; // fewer items per page for readability
+  const totalPages = Math.ceil(products.length / productsPerPage);
+
+  const safeGet = (value) => (value ? value : 'N/A');
+
+  const generatePageHTML = (productsChunk, pageNumber, totalPages) => {
+    let rowsHTML = productsChunk.map((product, index) => {
+      const slNo = index + 1 + (pageNumber - 1) * productsPerPage;
+
+      const quantity = parseInt(product.quantity, 10) || 0;
+      const deliveredQuantity = parseInt(product.deliveredQuantity, 10) || 0;
+      const psRatio = parseInt(product.psRatio, 10) || 1;
+      const remainingQuantity = quantity - deliveredQuantity;
+
+      if (psRatio > 1) {
+        // Calculate boxes and pieces for ordered
+        const oBoxes = Math.floor(quantity / psRatio);
+        const oPieces = quantity % psRatio;
+
+        // Calculate boxes and pieces for delivered
+        const dBoxes = Math.floor(deliveredQuantity / psRatio);
+        const dPieces = deliveredQuantity % psRatio;
+
+        // Calculate boxes and pieces for remaining
+        const rBoxes = Math.floor(remainingQuantity / psRatio);
+        const rPieces = remainingQuantity % psRatio;
+
+        return `
+          <tr>
+            <td>${slNo}</td>
+            <td>${safeGet(product.item_id)}</td>
+            <td>${safeGet(product.name)}</td>
+            <!-- Ordered -->
+            <td>${oBoxes}</td>
+            <td>${oPieces}</td>
+            <td>${(oBoxes * psRatio) + oPieces}</td>
+            <!-- Delivered -->
+            <td>${dBoxes}</td>
+            <td>${dPieces}</td>
+            <td>${(dBoxes * psRatio) + dPieces}</td>
+            <!-- Remaining -->
+            <td>${rBoxes}</td>
+            <td>${rPieces}</td>
+            <td>${(rBoxes * psRatio) + rPieces}</td>
+          </tr>
+        `;
+      } else {
+        // psRatio = 1, show as single numbers
+        return `
+          <tr>
+            <td>${slNo}</td>
+            <td>${safeGet(product.item_id)}</td>
+            <td>${safeGet(product.name)}</td>
+            <td>${quantity}</td>
+            <td>${deliveredQuantity}</td>
+            <td>${remainingQuantity}</td>
+          </tr>
+        `;
+      }
+    }).join('');
+
+    // If no products
+    if (productsChunk.length === 0) {
+      rowsHTML = '<tr><td colspan="12">No Products</td></tr>';
+    }
+
+    // Determine table header based on psRatio of the first product in the chunk (assuming consistent psRatio usage)
+    let tableHeaders = '';
+    const firstProduct = productsChunk[0];
+    const firstPsRatio = firstProduct ? parseInt(firstProduct.psRatio, 10) || 1 : 1;
+
+    if (firstPsRatio > 1) {
+      tableHeaders = `
+        <tr>
+          <th rowspan="2">Sl</th>
+          <th rowspan="2">Item ID</th>
+          <th rowspan="2">Product Name</th>
+          <th colspan="3">Ordered</th>
+          <th colspan="3">Delivered</th>
+          <th colspan="3">Remaining</th>
+        </tr>
+        <tr>
+          <th>Boxes</th>
+          <th>Pcs</th>
+          <th>Total Pcs</th>
+          <th>Boxes</th>
+          <th>Pcs</th>
+          <th>Total Pcs</th>
+          <th>Boxes</th>
+          <th>Pcs</th>
+          <th>Total Pcs</th>
+        </tr>
+      `;
+    } else {
+      tableHeaders = `
+        <tr>
+          <th>Sl</th>
+          <th>Item ID</th>
+          <th>Product Name</th>
+          <th>Ordered</th>
+          <th>Delivered</th>
+          <th>Remaining</th>
+        </tr>
+      `;
+    }
+
+    return `
+    <div class="loading-slip">
+      <!-- Header Section -->
+      <div class="header">
+        <h1>KK TRADING</h1>
+        <p class="sub-header">Tiles, Granites, Sanitary Wares, UV Sheets</p>
+      </div>
+
+      <!-- Delivery & Payment Info -->
+      <div class="info-section">
+        <div class="left-info">
+          <p><strong>Loading Slip For Invoice:</strong> ${safeGet(invoiceNo)}</p>
+          <p><strong>Invoice Date:</strong> ${new Date(invoiceDate).toLocaleDateString()}</p>
+          <p><strong>Expected Delivery:</strong> ${new Date(expectedDeliveryDate).toLocaleDateString()}</p>
+          <p><strong>Salesman:</strong> ${safeGet(salesmanName)}</p>
+          <p><strong>Marketed By:</strong> ${safeGet(marketedBy)}</p>
+          <p><strong>Delivery Status:</strong> ${safeGet(deliveryStatus)}</p>
+        </div>
+        <div class="right-info">
+          <p><strong>Customer:</strong> ${safeGet(customerName)}</p>
+          <p>${safeGet(customerAddress)}</p>
+          <p>Contact: ${safeGet(customerContactNumber)}</p>
+          <p><strong>Delivery Dates:</strong> ${deliveryDates.length > 0 ? deliveryDates.join(', ') : 'N/A'}</p>
+          <p><strong>Total Paid:</strong> Rs. ${parseFloat(totalAmountPaid).toFixed(2)}</p>
+        </div>
+      </div>
+
+      <div class="loading-slip-title">
+        <h2>LOADING SLIP</h2>
+      </div>
+
+      <!-- Payment Details Section -->
+      <div class="payment-details">
+        <p><strong>Payment Details:</strong></p>
+        ${
+          paymentDetails.length > 0
+          ? paymentDetails.map(pd => `<p>${pd}</p>`).join('')
+          : '<p>No payment details available.</p>'
+        }
+      </div>
+
+      <!-- Products Table -->
+      <table class="products-table">
+        <thead>
+          ${tableHeaders}
+        </thead>
+        <tbody>
+          ${rowsHTML}
+        </tbody>
+      </table>
+
+      <div class="footer-section">
+        <p>Page ${pageNumber} of ${totalPages}</p>
+        <p class="disclaimer">
+          This document is a Loading Slip only. Please verify quantities before dispatch.
+          Returns or exchanges are subject to the company's terms and conditions.
+        </p>
+      </div>
+    </div>
+    `;
+  };
+
+  const fullHTMLContentPages = [];
+  for (let i = 0; i < totalPages; i++) {
+    const productsChunk = products.slice(i * productsPerPage, (i + 1) * productsPerPage);
+    fullHTMLContentPages.push(generatePageHTML(productsChunk, i + 1, totalPages));
+  }
+
+  const fullHTMLContent = `
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+      <title>Loading Slip - ${invoiceNo}</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          background: #f9f9f9;
+          margin: 0;
+          padding: 0;
+          font-size: 10px;
+        }
+        .loading-slip {
+          background-color: #fff;
+          width: 95%;
+          max-width: 1000px;
+          margin: 20px auto;
+          padding: 20px;
+          border-radius: 10px;
+          box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+          page-break-after: always;
+        }
+        .header {
+          background-color: #960101; /* Dark Red */
+          padding: 10px;
+          color: #fff;
+          text-align: center;
+          border-top-left-radius: 10px;
+          border-top-right-radius: 10px;
+        }
+        .header h1 {
+          margin-bottom: 5px;
+          font-size: 16px;
+          font-weight: bold;
+        }
+        .sub-header {
+          font-size: 10px;
+          font-weight: 700;
+        }
+        .info-section {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 10px;
+          padding-bottom: 10px;
+          border-bottom: 1px solid #e0e0e0;
+        }
+        .info-section .left-info, .info-section .right-info {
+          width: 48%;
+        }
+        .info-section p {
+          margin: 2px 0;
+        }
+        .loading-slip-title {
+          text-align: center;
+          margin-top: 10px;
+        }
+        .loading-slip-title h2 {
+          font-size: 12px;
+          color: #960101;
+          text-transform: uppercase;
+          margin-bottom: 5px;
+        }
+        .payment-details {
+          margin-top: 10px;
+          font-size: 9px;
+          line-height: 1.2em;
+        }
+        .payment-details p {
+          margin: 2px 0;
+        }
+        .products-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-top: 10px;
+          font-size: 9px;
+        }
+        .products-table th {
+          background-color: #f4cccc;
+          color: #960101;
+          padding: 4px;
+          border: 1px solid #ddd;
+          text-align: center;
+        }
+        .products-table td {
+          padding: 4px;
+          text-align: center;
+          border: 1px solid #ddd;
+          color: #333;
+          font-size: 9px;
+        }
+        .footer-section {
+          text-align: center;
+          margin-top: 10px;
+          font-size: 8px;
+          color: #777;
+        }
+        .footer-section .disclaimer {
+          font-style: italic;
+          margin-top: 5px;
+        }
+
+        @media print {
+          body {
+            margin:0;
+            padding:0;
+          }
+          .loading-slip {
+            page-break-after: always;
+          }
+          .footer-section {
+            page-break-inside: avoid;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      ${fullHTMLContentPages.join('')}
+    </body>
+  </html>
+  `;
+
+  try {
+    const { chromium } = await import('playwright');
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.setContent(fullHTMLContent, { waitUntil: 'networkidle' });
+
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '20px', bottom: '20px', left: '10px', right: '10px' },
+    });
+
+    await browser.close();
+
+    // Send the PDF as a response
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename=LoadingSlip_${invoiceNo}.pdf`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.end(pdfBuffer);
+  } catch (error) {
+    console.error('Error generating Loading Slip PDF:', error);
+    res.status(500).json({ error: 'Failed to generate Loading Slip PDF' });
+  }
+});
+
+
+printRouter.post('/generate-leave-application-pdf', async (req, res) => {
+  const { 
+    userName,
+    userId,
+    reason,
+    startDate,
+    endDate,
+    status,
+    _id 
+  } = req.body;
+
+  const today = new Date().toLocaleDateString();
+  const formattedStartDate = new Date(startDate).toLocaleDateString();
+  const formattedEndDate = new Date(endDate).toLocaleDateString();
+
+  const htmlContent = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Leave Application</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        margin: 30px;
+        color: #333;
+      }
+
+      .header {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+
+      .header h1 {
+        margin-bottom: 5px;
+        font-size: 16px;
+        font-weight: bold;
+        color: #960101;
+      }
+
+      .header p {
+        margin: 2px 0;
+        font-size: 10px;
+        color: #555;
+      }
+
+      hr {
+        margin: 10px 0;
+        border: none;
+        border-top: 1px solid #ccc;
+      }
+
+      .date {
+        text-align: right;
+        margin-bottom: 20px;
+        font-size: 10px;
+      }
+
+      .content {
+        line-height: 1.5;
+      }
+
+      .content p {
+        margin-bottom: 10px;
+      }
+
+      .signature {
+        margin-top: 50px;
+      }
+
+      .signature-line {
+        margin-bottom: 5px;
+        width: 200px;
+        border-bottom: 1px solid #333;
+      }
+
+      footer {
+        text-align: center;
+        font-size: 8px;
+        color: #999;
+        margin-top: 50px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>KK TRADING</h1>
+      <p>Chambakulam, Moncompu</p>
+      <p>Contact: 8606565282 | tradeinkk@gmail.com</p>
+      <hr>
+    </div>
+
+    <div class="date">
+      <p>Date: ${today}</p>
+    </div>
+
+    <div class="content">
+      <p><strong>Subject:</strong> Leave Application</p>
+      <p><strong>Name:</strong> ${userName}</p>
+      <p><strong>User ID:</strong> ${userId}</p>
+      <p><strong>Reason for Leave:</strong> ${reason}</p>
+      <p><strong>Start Date:</strong> ${formattedStartDate}</p>
+      <p><strong>End Date:</strong> ${formattedEndDate}</p>
+      <p><strong>Status:</strong> ${status}</p>
+
+      <p>I kindly request your approval for the leave period stated above. I assure that any pending responsibilities will be managed or delegated appropriately during my absence. I will resume my duties promptly upon my return.</p>
+    </div>
+
+    <div class="signature">
+      <div class="signature-line"></div>
+      <p>Signature of Applicant</p>
+    </div>
+
+    <footer>
+      <p>KK Trading - Leave Letter</p>
+    </footer>
+  </body>
+  </html>
+  `;
+
+  try {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.setContent(htmlContent, { waitUntil: 'networkidle' });
+
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' },
+    });
+
+    await browser.close();
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename=Leave_${_id}.pdf`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.end(pdfBuffer);
+  } catch (error) {
+    console.error('Error generating leave application PDF:', error);
+    res.status(500).json({ error: 'Failed to generate leave application PDF' });
+  }
+});
+
+
+
+
 
 
 
