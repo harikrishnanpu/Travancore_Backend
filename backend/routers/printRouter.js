@@ -1593,7 +1593,6 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
   `;
 
   try {
-    const { chromium } = await import('playwright');
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     await page.setContent(fullHTMLContent, { waitUntil: 'networkidle' });
