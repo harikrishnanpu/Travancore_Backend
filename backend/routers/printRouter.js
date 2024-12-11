@@ -1452,8 +1452,7 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
       <div class="footer-section">
         <p>Page ${pageNumber} of ${totalPages}</p>
         <p class="disclaimer">
-          This document is a Loading Slip only. Please verify quantities before dispatch.
-          Returns or exchanges are subject to the company's terms and conditions.
+        KK TRADING - loading Slip of ${invoiceNo}
         </p>
       </div>
     </div>
@@ -1605,8 +1604,8 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
     res.setHeader('Content-Type', 'text/html');
     res.send(fullHTMLContent);
   } catch (error) {
-    console.error('Error generating Loading Slip HTML:', error);
-    res.status(500).json({ error: 'Failed to generate Loading Slip HTML' });
+    console.log('Error generating Loading Slip HTML:', error);
+    res.status(500).json(error);
   }
 });
 
