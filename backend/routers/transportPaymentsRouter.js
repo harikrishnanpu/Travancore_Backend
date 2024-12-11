@@ -167,38 +167,42 @@ transportPaymentsRouter.get('/daily/payments', async (req, res) => {
     // Adjust end date to include the entire day
     end.setHours(23, 59, 59, 999);
 
-    let transports = [];
-    // Aggregation pipeline to filter payments within the date range
-     transports = await TransportPayment.aggregate([
-      { $unwind: '$payments' },
+    // Aggregation pipeline to fetch transport payments within the date range
+    const transports = await TransportPayment.aggregate([
+      { $unwind: '$payments' }, // Unwind payments array
       {
         $match: {
-          'payments.date': { $gte: start, $lte: end },
+          'payments.date': { $gte: start, $lte: end }, // Filter by date range
         },
       },
       {
         $group: {
-          _id: '$transportId',
+          _id: '$transportId', // Group by transportId
           transportName: { $first: '$transportName' },
-          payments: { $push: '$payments' },
+          payments: {
+            $push: {
+              amount: '$payments.amount',
+              date: '$payments.date',
+              method: '$payments.method',
+              submittedBy: '$payments.submittedBy',
+              remark: '$payments.remark',
+            },
+          },
         },
       },
       {
-        $sort: { transportName: 1 }, // Optional: Sort transports alphabetically
+        $sort: { transportName: 1 }, // Sort by transportName alphabetically
       },
     ]);
 
-    // Check if any transports have payments in the date range
-    // if (!transports || transports.length === 0) {
-    //   return res.status(404).json({ message: 'No transport payments found within the specified date range.' });
-    // }
-
+    // Send the response
     res.json(transports);
   } catch (error) {
     console.error('Error fetching transport payments:', error);
     res.status(500).json({ message: 'Internal Server Error while fetching transport payments.' });
   }
 });
+
 
 // Get All Transport Payments
 transportPaymentsRouter.get('/all', async (req, res) => {

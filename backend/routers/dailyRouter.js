@@ -34,7 +34,7 @@ transactionRouter.get('/transactions', async (req, res) => {
     // Include the entire 'toDate' day
     end.setHours(23, 59, 59, 999);
 
-    // Aggregation pipeline to fetch transactions and optionally populate category
+    // Aggregation pipeline to fetch transactions and ensure only matching dates are retrieved
     const transactions = await DailyTransaction.aggregate([
       {
         $match: {
@@ -65,6 +65,8 @@ transactionRouter.get('/transactions', async (req, res) => {
           paymentTo: 1,
           method: 1,
           remark: 1,
+          billId: 1,
+          user: 1,
           // If categoryDetails is present, use its name; otherwise, use the original category string
           category: {
             $ifNull: ['$categoryDetails.name', '$category']
@@ -76,12 +78,35 @@ transactionRouter.get('/transactions', async (req, res) => {
       },
     ]);
 
-    res.json(transactions);
+    // Filter transactions to ensure they strictly fall within the date range
+    const filteredTransactions = transactions.filter(transaction => {
+      const transactionDate = new Date(transaction.date);
+      return transactionDate >= start && transactionDate <= end;
+    });
+
+    // Map transactions to include payment details explicitly
+    const formattedTransactions = filteredTransactions.map(transaction => {
+      return {
+        _id: transaction._id,
+        date: transaction.date,
+        amount: transaction.amount,
+        type: transaction.type,
+        paymentDetails: transaction.type === 'in' ? transaction.paymentFrom : transaction.paymentTo,
+        method: transaction.method,
+        remark: transaction.remark,
+        billId: transaction.billId,
+        user: transaction.user,
+        category: transaction.category,
+      };
+    });
+
+    res.json(formattedTransactions);
   } catch (error) {
     console.error('Error fetching transactions:', error);
     res.status(500).json({ message: 'Internal Server Error while fetching transactions.' });
   }
 });
+
 
 
 
@@ -333,10 +358,9 @@ transactionRouter.get('/allbill/payments', async (req, res) => {
     // Adjust end date to include the entire day
     end.setHours(23, 59, 59, 999);
 
-    // Fetch all bills for the user (not filtering by invoiceDate)
-    const billings = await Billing.find({
-      user: req.body.userId, // Ensure this is passed in the request body
-    }).populate('products') // If products are references
+    // Fetch all bills
+    const billings = await Billing.find()
+      .populate('products') // If products are references
       .populate('deliveries') // If deliveries are references
       .lean(); // Use lean() for better performance if you don't need Mongoose document methods
 
@@ -344,33 +368,42 @@ transactionRouter.get('/allbill/payments', async (req, res) => {
     const payments = [];
     const otherExpenses = [];
 
-    // Iterate through billings to collect payments and other expenses
+    // Iterate through billings to collect payments and other expenses within date range
     billings.forEach(billing => {
       (billing.payments || []).forEach(payment => {
-        payments.push({
-          billingId: billing._id,
-          amount: payment.amount,
-          method: payment.method,
-          date: payment.date,
-          remark: payment.remark,
-        });
+        const paymentDate = new Date(payment.date);
+        if (paymentDate >= start && paymentDate <= end) {
+          payments.push({
+            billingId: billing._id,
+            amount: payment.amount,
+            method: payment.method,
+            date: payment.date,
+            remark: payment.remark,
+          });
+        }
       });
 
       (billing.otherExpenses || []).forEach(expense => {
-        otherExpenses.push({
-          billingId: billing._id,
-          amount: expense.amount,
-          remark: expense.remark,
-          date: expense.date,
-        });
+        const expenseDate = new Date(expense.date);
+        if (expenseDate >= start && expenseDate <= end) {
+          otherExpenses.push({
+            billingId: billing._id,
+            amount: expense.amount,
+            remark: expense.remark,
+            date: expense.date,
+          });
+        }
       });
     });
 
     // Format the response
     const formattedResponse = {
-      billings, // All billings for the user within the date range
-      payments: payments || [], // Payments filtered by date range
-      otherExpenses: otherExpenses || [], // Other expenses filtered by date range
+      billings: billings.filter(billing => {
+        const billingDate = new Date(billing.invoiceDate);
+        return billingDate >= start && billingDate <= end;
+      }),
+      payments, // Payments filtered by date range
+      otherExpenses, // Other expenses filtered by date range
     };
 
     res.json(formattedResponse);

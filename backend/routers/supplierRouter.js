@@ -500,10 +500,9 @@ supplierRouter.get('/daily/payments', async (req, res) => {
 
     // Adjust end date to include the entire day
     end.setHours(23, 59, 59, 999);
-    let suppliers = [];
 
-    // Aggregation pipeline
-     suppliers = await SupplierAccount.aggregate([
+    // Fetch supplier payments within the date range
+    const suppliers = await SupplierAccount.aggregate([
       { $unwind: '$payments' },
       {
         $match: {
@@ -514,7 +513,13 @@ supplierRouter.get('/daily/payments', async (req, res) => {
         $group: {
           _id: '$sellerId',
           sellerName: { $first: '$sellerName' },
-          payments: { $push: '$payments' },
+          payments: { $push: {
+            amount: '$payments.amount',
+            date: '$payments.date',
+            method: '$payments.method',
+            submittedBy: '$payments.submittedBy',
+            remark: '$payments.remark',
+          }},
         },
       },
       {
@@ -522,17 +527,13 @@ supplierRouter.get('/daily/payments', async (req, res) => {
       },
     ]);
 
-    // Check if any suppliers have payments in the date range
-    // if (!suppliers || suppliers.length === 0) {
-    //   return res.status(404).json({ message: 'No supplier payments found within the specified date range.' });
-    // }
-
     res.json(suppliers);
   } catch (error) {
     console.error('Error fetching supplier payments:', error);
     res.status(500).json({ message: 'Internal Server Error while fetching supplier payments.' });
   }
 });
+
 
 
 export default supplierRouter;
