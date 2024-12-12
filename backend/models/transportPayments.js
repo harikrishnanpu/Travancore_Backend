@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 
 const transportPaymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
+  billId: { type: String, required: true},
   method: { type: String, required: true }, // e.g., "credit card", "cash", etc.
   submittedBy: { type: String, required: true },
   date: { type: Date, default: Date.now },
@@ -20,6 +21,7 @@ const transportPaymentAggregateSchema = new mongoose.Schema(
   {
     transportName: { type: String, required: true },
     transportType: { type: String, required: true }, // e.g., 'local', 'logistic'
+    transportGst: { type: String},
     payments: [transportPaymentSchema], // Array of payments
     billings: [transportBillingSchema], // Array of billings
     totalAmountBilled: { type: Number, default: 0 }, // Total amount from billings

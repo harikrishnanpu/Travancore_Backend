@@ -14,7 +14,6 @@ import {
   payOrderEmailTemplate,
 } from '../utils.js';
 import Purchase from '../models/purchasemodals.js';
-import Log from '../models/Logmodal.js';
 import Transportation from '../models/transportModal.js';
 
 const orderRouter = express.Router();

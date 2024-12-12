@@ -1,7 +1,6 @@
 import express from 'express';
 import Purchase from '../models/purchasemodals.js';
-import Transportation from '../models/transportModal.js';
-
+import TransportPayment from '../models/transportPayments.js';
 
 
 const purchaseRouter = express.Router();
@@ -98,7 +97,7 @@ purchaseRouter.get('/payments/suggesstion', async (req, res) => {
 
 
 purchaseRouter.get('/get-all/transportCompany', async (req, res) => {
-  const transportCompanies = await Transportation.distinct('transportCompanyName');
+  const transportCompanies = await TransportPayment.distinct('transportName');
   res.json(transportCompanies);
 });
 

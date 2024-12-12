@@ -6,7 +6,6 @@ import User from '../models/userModel.js';
 import { isAdmin, isAuth } from '../utils.js';
 import asyncHandler from 'express-async-handler';
 import Purchase from '../models/purchasemodals.js';
-import Log from '../models/Logmodal.js';
 import SellerPayment from '../models/sellerPayments.js';
 import TransportPayment from '../models/transportPayments.js';
 import SupplierAccount from '../models/supplierAccountModal.js';
@@ -564,6 +563,7 @@ productRouter.post(
             logisticTransportPayment = new TransportPayment({
               transportName: logistic.transportCompanyName,
               transportType: 'logistic',
+              transportGst: logistic.transportGst,
               payments: [],
               billings: [logisticBillingEntry],
             });
@@ -619,6 +619,7 @@ productRouter.post(
             localTransportPayment = new TransportPayment({
               transportName: local.transportCompanyName,
               transportType: 'local',
+              transportGst: local.transportGst,
               payments: [],
               billings: [localBillingEntry],
             });
@@ -679,6 +680,7 @@ productRouter.post(
           sellerId,
           sellerName,
           sellerAddress,
+          sellerGst,
           bills: [billEntry],
           payments: [],
         });
@@ -798,6 +800,7 @@ productRouter.put(
             sellerId,
             sellerName,
             sellerAddress,
+            sellerGst,
             bills: [billEntry],
             payments: [],
           });
@@ -1048,6 +1051,7 @@ productRouter.put(
             logisticTransportPayment = new TransportPayment({
               transportName: logistic.transportCompanyName,
               transportType: 'logistic',
+              transportGst: logistic.transportGst,
               payments: [],
               billings: [logisticBillingEntry],
             });
@@ -1098,6 +1102,7 @@ productRouter.put(
             localTransportPayment = new TransportPayment({
               transportName: local.transportCompanyName,
               transportType: 'local',
+              transportGst: local.transportGst,
               payments: [],
               billings: [localBillingEntry],
             });

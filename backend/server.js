@@ -15,10 +15,8 @@ import returnRouter from './routers/returnRouter.js';
 import xlsx from 'xlsx'; // Use 'xlsx' import for ES modules
 import logMiddleware from './middleware.js';
 import bodyParser from 'body-parser';
-import { chromium } from 'playwright'; 
 import transactionRouter from './routers/dailyRouter.js';
 import purchaseRouter from './routers/purchaseRouter.js';
-import QRCode from 'qrcode';
 import printRouter from './routers/printRouter.js';
 import accountRouter from './routers/accountPaymentsRouter.js';
 import sellerPaymentsRouter from './routers/sellerPaymentsRouter.js';
@@ -57,7 +55,6 @@ app.use('/api/transportpayments', transportPaymentsRouter);
 app.use('/api/site-report', siteReportRouter);
 app.use('/api/customer', customerRouter);
 app.use('/api/seller', supplierRouter);
-app.use('/api/transport-payments', transportPaymentsRouter);
 app.use('/api/stock-update', stockUpdateRouter);
 app.use('/api/leaves', leaveApplicationRouter);
 

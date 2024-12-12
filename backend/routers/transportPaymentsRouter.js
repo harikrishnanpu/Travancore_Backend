@@ -2,6 +2,7 @@
 import express from 'express';
 import TransportPayment from '../models/transportPayments.js';
 import PaymentsAccount from '../models/paymentsAccountModal.js';
+import mongoose from 'mongoose';
 
 
 const transportPaymentsRouter = express.Router();
@@ -56,7 +57,7 @@ transportPaymentsRouter.post('/add-payments/:id', async (req, res) => {
       return res.status(404).json({ message: 'Transport not found' });
     }
 
-    const { amount, method, date, remark, transportName, transportId } = req.body;
+    const { amount, method, date, remark, billId , userId, transportName, transportId } = req.body;
 
     if (!amount || !method || !date) {
       return res.status(400).json({ message: 'Amount, method, and date are required' });
@@ -66,9 +67,10 @@ transportPaymentsRouter.post('/add-payments/:id', async (req, res) => {
       amount,
       method,
       date,
+      billId,
       remark,
       referenceId: paymentReferenceId,
-      submittedBy: req.user ? req.user.name : 'Unknown', // Assuming you have user authentication
+      submittedBy: userId ? userId : 'Unknown', // Assuming you have user authentication
     };
 
 
@@ -215,28 +217,230 @@ transportPaymentsRouter.get('/all', async (req, res) => {
 });
 
 
+transportPaymentsRouter.get('/name/:name', async (req, res) => {
+  try{
+    const transports = await TransportPayment.findOne({ transportName: new RegExp(req.params.name, 'i') });
+    res.json(transports);
+  }catch (err) {
+    res.status(404).json({ message: 'Transport not found.' });
+  }
+})
 
 
-// Update Transport Payment
+
+
+// PUT /:id/update
 transportPaymentsRouter.put('/:id/update', async (req, res) => {
-  try {
-    const payment = await TransportPayment.findById(req.params.id);
-    if (payment) {
-      payment.transportName = req.body.transportName || payment.transportName;
-      payment.transportType = req.body.transportType || payment.transportType;
-      payment.billings = req.body.billings || payment.billings;
-      payment.payments = req.body.payments || payment.payments;
-      // totalAmountBilled, totalAmountPaid, paymentRemaining will be recalculated by pre-save middleware
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-      const updatedPayment = await payment.save();
-      res.json(updatedPayment);
-    } else {
-      res.status(404).json({ message: 'Transport payment not found.' });
+  try {
+    const transportPaymentId = req.params.id;
+    const {
+      transportName,
+      transportType,
+      transportGst,
+      billings,
+      payments, // Array of payment objects
+    } = req.body;
+
+    // 1. Fetch the existing TransportPayment document
+    const existingTransportPayment = await TransportPayment.findById(transportPaymentId).session(session);
+
+    if (!existingTransportPayment) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: 'Transport payment not found.' });
     }
+
+    // 2. Store old payments for comparison
+    const oldPaymentsMap = new Map(
+      existingTransportPayment.payments.map((payment) => [payment.billId, payment])
+    );
+
+    // 3. Update TransportPayment fields
+    existingTransportPayment.transportName = transportName || existingTransportPayment.transportName;
+    existingTransportPayment.transportType = transportType || existingTransportPayment.transportType;
+    existingTransportPayment.transportGst = transportGst || existingTransportPayment.transportGst;
+
+    if (billings) {
+      existingTransportPayment.billings = billings;
+    }
+
+    if (payments) {
+      existingTransportPayment.payments = payments;
+    }
+
+    // 4. Save the updated TransportPayment (triggers pre-save middleware)
+    const updatedTransportPayment = await existingTransportPayment.save({ session });
+
+    // 5. Prepare new payments map
+    const newPaymentsMap = new Map(
+      updatedTransportPayment.payments.map((payment) => [payment.billId, payment])
+    );
+
+    // 6. Identify payments to add, update, or remove
+    const paymentsToAdd = [];
+    const paymentsToUpdate = [];
+    const paymentsToRemove = [];
+
+    // Determine added and updated payments
+    for (const [billId, newPayment] of newPaymentsMap.entries()) {
+      const oldPayment = oldPaymentsMap.get(billId);
+      if (!oldPayment) {
+        // New payment
+        paymentsToAdd.push(newPayment);
+      } else {
+        // Existing payment, check if any field has changed
+        const isChanged =
+          oldPayment.amount !== newPayment.amount ||
+          oldPayment.method !== newPayment.method ||
+          oldPayment.remark !== newPayment.remark ||
+          oldPayment.submittedBy !== newPayment.submittedBy ||
+          new Date(oldPayment.date).toISOString() !== new Date(newPayment.date).toISOString();
+
+        if (isChanged) {
+          paymentsToUpdate.push({ oldPayment, newPayment });
+        }
+      }
+    }
+
+    // Determine removed payments
+    for (const [billId, oldPayment] of oldPaymentsMap.entries()) {
+      if (!newPaymentsMap.has(billId)) {
+        paymentsToRemove.push(oldPayment);
+      }
+    }
+
+    // Helper function to find PaymentsAccount by accountId
+    const findPaymentsAccountById = async (accountId) => {
+      const account = await PaymentsAccount.findOne({ accountId }).session(session);
+      if (!account) {
+        throw new Error(`PaymentsAccount with accountId ${accountId} not found.`);
+      }
+      return account;
+    };
+
+    // 7. Handle Added Payments
+    for (const payment of paymentsToAdd) {
+      const { method: accountId, billId, amount, method, remark, submittedBy, date } = payment;
+
+      // Find the PaymentsAccount
+      const paymentsAccount = await findPaymentsAccountById(accountId);
+
+      // Add the payment to paymentsOut
+      paymentsAccount.paymentsOut.push({
+        amount,
+        method,
+        remark,
+        referenceId: billId,
+        submittedBy,
+        date,
+      });
+
+      await paymentsAccount.save({ session });
+    }
+
+    // 8. Handle Updated Payments
+    for (const { oldPayment, newPayment } of paymentsToUpdate) {
+      const {
+        billId: oldBillId,
+        method: oldAccountId,
+        amount: oldAmount,
+        method: oldMethod,
+        remark: oldRemark,
+        submittedBy: oldSubmittedBy,
+        date: oldDate,
+      } = oldPayment;
+
+      const {
+        billId: newBillId,
+        method: newAccountId,
+        amount: newAmount,
+        method: newMethod,
+        remark: newRemark,
+        submittedBy: newSubmittedBy,
+        date: newDate,
+      } = newPayment;
+
+      if (oldAccountId !== newAccountId) {
+        // Method (accountId) has changed: Remove from old account and add to new account
+
+        // Remove from old PaymentsAccount
+        const oldAccount = await findPaymentsAccountById(oldAccountId);
+        oldAccount.paymentsOut = oldAccount.paymentsOut.filter(
+          (pa) => pa.referenceId !== oldBillId
+        );
+        await oldAccount.save({ session });
+
+        // Add to new PaymentsAccount
+        const newAccount = await findPaymentsAccountById(newAccountId);
+        newAccount.paymentsOut.push({
+          amount: newAmount,
+          method: newMethod,
+          remark: newRemark,
+          referenceId: newBillId,
+          submittedBy: newSubmittedBy,
+          date: newDate,
+        });
+        await newAccount.save({ session });
+      } else {
+        // Method (accountId) hasn't changed: Update the payment within the same account
+        const account = await findPaymentsAccountById(newAccountId);
+
+        const paymentIndex = account.paymentsOut.findIndex(
+          (pa) => pa.referenceId === newBillId
+        );
+
+        if (paymentIndex === -1) {
+          throw new Error(
+            `Payment with billId ${newBillId} not found in PaymentsAccount ${newAccountId}.`
+          );
+        }
+
+        // Update the payment fields
+        account.paymentsOut[paymentIndex].amount = newAmount;
+        account.paymentsOut[paymentIndex].method = newMethod;
+        account.paymentsOut[paymentIndex].remark = newRemark;
+        account.paymentsOut[paymentIndex].submittedBy = newSubmittedBy;
+        account.paymentsOut[paymentIndex].date = newDate;
+
+        await account.save({ session });
+      }
+    }
+
+    // 9. Handle Removed Payments
+    for (const oldPayment of paymentsToRemove) {
+      const { billId, method: accountId } = oldPayment;
+
+      // Find the PaymentsAccount
+      const paymentsAccount = await findPaymentsAccountById(accountId);
+
+      // Remove the payment from paymentsOut
+      paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
+        (pa) => pa.referenceId !== billId
+      );
+
+      await paymentsAccount.save({ session });
+    }
+
+    // 10. Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    // 11. Return the updated TransportPayment document
+    res.json(updatedTransportPayment);
   } catch (error) {
+    // Abort the transaction in case of error
+    await session.abortTransaction();
+    session.endSession();
+
+    console.error('Error updating transport payment:', error);
     res.status(400).json({ message: error.message });
   }
 });
+
+
 
 // Delete Transport Payment
 transportPaymentsRouter.delete('/:id/delete', async (req, res) => {
@@ -264,6 +468,8 @@ transportPaymentsRouter.post('/create', async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 });
+
+
 
 
 

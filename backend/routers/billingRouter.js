@@ -1341,7 +1341,7 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
       
 
       let lastInvoice = 'KK0'
-      let lastCustomerId = 'CUS0'
+      let lastCustomerId = 'CUS001'
 
       if(billing){
         lastInvoice = billing.invoiceNo
