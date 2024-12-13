@@ -743,6 +743,17 @@ productRouter.put(
 
         if (product) {
           product.countInStock += newQuantity - oldQuantity;
+          product.actLength = item.actLength;
+          product.actBreadth = item.actBreadth;
+          product.size = item.size;
+          product.length = item.length;
+          product.breadth = item.breadth;
+          product.psRatio = item.psRatio;
+          product.name = item.name;
+          product.brand = item.brand;
+          product.category = item.category;
+          product.sUnit = item.sUnit;
+          product.pUnit = item.pUnit;
           product.price = parseFloat(item.totalPriceInNumbers);
           Object.assign(product, item);
           await product.save();

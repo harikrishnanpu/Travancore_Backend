@@ -160,7 +160,7 @@ customerRouter.get('/get/:id', async (req, res) => {
 customerRouter.put(
   '/:id/update',
   [
-    // Validation middlewares
+    // Validation Middlewares
     body('customerName')
       .optional()
       .trim()
@@ -205,7 +205,6 @@ customerRouter.put(
     // Additional validations as needed
   ],
   async (req, res) => {
-    // Start a session
     const session = await mongoose.startSession();
     session.startTransaction();
 
@@ -213,7 +212,6 @@ customerRouter.put(
       // Handle validation errors
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        // Return the first validation error
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ message: errors.array()[0].msg });
@@ -222,9 +220,7 @@ customerRouter.put(
       const { customerName, bills, payments, userId } = req.body;
 
       // Find the customer account by ID
-      const account = await CustomerAccount.findById(req.params.id).session(
-        session
-      );
+      const account = await CustomerAccount.findById(req.params.id).session(session);
       if (!account) {
         await session.abortTransaction();
         session.endSession();
@@ -236,273 +232,264 @@ customerRouter.put(
         account.customerName = customerName.trim();
       }
 
-      // === Handle Bills ===
+      // === Handle Bills (Only Update, Do Not Remove Entire Billing Docs) ===
       if (bills !== undefined) {
-        // Check for duplicate invoice numbers within the bills
+        // Check for duplicate invoice numbers
         const invoiceNos = bills.map((bill) => bill.invoiceNo.trim());
         const uniqueInvoiceNos = new Set(invoiceNos);
         if (invoiceNos.length !== uniqueInvoiceNos.size) {
           await session.abortTransaction();
           session.endSession();
-          return res
-            .status(400)
-            .json({ message: 'Duplicate invoice numbers are not allowed.' });
+          return res.status(400).json({
+            message: 'Duplicate invoice numbers are not allowed.'
+          });
         }
 
-        // Map existing bills by their invoiceNo for easy lookup
+        // Map existing bills by invoiceNo for quick updates
         const existingBillsMap = new Map(
           account.bills.map((bill) => [bill.invoiceNo.trim(), bill])
         );
 
-        // Bills to be updated in the account
         const updatedBills = [];
 
         for (const bill of bills) {
           const invoiceNo = bill.invoiceNo.trim();
           const existingBill = existingBillsMap.get(invoiceNo);
 
+          const updatedBillData = {
+            invoiceNo,
+            billAmount: parseFloat(bill.billAmount),
+            invoiceDate: bill.invoiceDate ? new Date(bill.invoiceDate) : new Date(),
+            deliveryStatus: bill.deliveryStatus || (existingBill ? existingBill.deliveryStatus : 'Pending'),
+          };
+
           if (existingBill) {
-            // Existing bill, update it
-            existingBill.billAmount = parseFloat(bill.billAmount);
-            existingBill.invoiceDate = bill.invoiceDate
-              ? new Date(bill.invoiceDate)
-              : undefined;
-            existingBill.deliveryStatus =
-              bill.deliveryStatus || existingBill.deliveryStatus;
+            // Update existing bill in CustomerAccount
+            existingBill.billAmount = updatedBillData.billAmount;
+            existingBill.invoiceDate = updatedBillData.invoiceDate;
+            existingBill.deliveryStatus = updatedBillData.deliveryStatus;
             updatedBills.push(existingBill);
+
+            // Also update billing doc if it exists
+            const existingBilling = await Billing.findOne({ invoiceNo }).session(session).exec();
+            if (existingBilling) {
+              existingBilling.grandTotal = updatedBillData.billAmount;
+              existingBilling.invoiceDate = updatedBillData.invoiceDate;
+              existingBilling.deliveryStatus = updatedBillData.deliveryStatus;
+              await existingBilling.save({ session });
+            }
+
             existingBillsMap.delete(invoiceNo);
-
-            // Update the Billing model if bill exists there
-            const existingBilling = await Billing.findOne({ invoiceNo })
-              .session(session)
-              .exec();
-            if (existingBilling) {
-              existingBilling.grandTotal = parseFloat(bill.billAmount);
-              existingBilling.invoiceDate = bill.invoiceDate
-                ? new Date(bill.invoiceDate)
-                : existingBilling.invoiceDate;
-              existingBilling.deliveryStatus =
-                bill.deliveryStatus || existingBilling.deliveryStatus;
-              await existingBilling.save({ session });
-            }
           } else {
-            // New bill, add it to the account
-            const newBill = {
-              invoiceNo,
-              billAmount: parseFloat(bill.billAmount),
-              invoiceDate: bill.invoiceDate
-                ? new Date(bill.invoiceDate)
-                : new Date(),
-              deliveryStatus: bill.deliveryStatus || 'Pending',
-            };
-            updatedBills.push(newBill);
+            // New bill in CustomerAccount
+            updatedBills.push(updatedBillData);
 
-            // Optionally update the Billing model if the bill exists there
-            const existingBilling = await Billing.findOne({ invoiceNo })
-              .session(session)
-              .exec();
+            // If a Billing doc with the same invoiceNo exists, update it
+            const existingBilling = await Billing.findOne({ invoiceNo }).session(session).exec();
             if (existingBilling) {
-              existingBilling.grandTotal = parseFloat(bill.billAmount);
-              existingBilling.invoiceDate = bill.invoiceDate
-                ? new Date(bill.invoiceDate)
-                : existingBilling.invoiceDate;
-              existingBilling.deliveryStatus =
-                bill.deliveryStatus || existingBilling.deliveryStatus;
+              existingBilling.grandTotal = updatedBillData.billAmount;
+              existingBilling.invoiceDate = updatedBillData.invoiceDate;
+              existingBilling.deliveryStatus = updatedBillData.deliveryStatus;
               await existingBilling.save({ session });
             }
           }
         }
 
-        // Remove any bills that are no longer in the updated list
-        for (const [invoiceNo, billToDelete] of existingBillsMap) {
-          // Remove the bill from Billing model if it exists
-          const existingBilling = await Billing.findOne({ invoiceNo }).session(
-            session
-          );
-          if (existingBilling) {
-            await existingBilling.remove({ session });
-          }
-          // The bill will be removed from account.bills when we reassign updatedBills
-        }
-
-        // Update the account's bills
+        // For any bills that are no longer in updated list, we do NOT remove billing docs.
+        // We simply leave the Billing doc as is. We just won't include them in CustomerAccount anymore.
+        // This means those bills are effectively removed from the CustomerAccount's bills array.
         account.bills = updatedBills;
       }
 
       // === Handle Payments ===
       if (payments !== undefined) {
-        // Generate a unique referenceId for new payments
-        const generateReferenceId = () => 'PAY' + Date.now().toString();
-
-        // Map existing payments by their referenceId for easy lookup
+        // Map existing payments by referenceId
         const existingPaymentsMap = new Map(
           account.payments.map((payment) => [payment.referenceId, payment])
         );
 
-        // Payments to be updated in the account
         const updatedPayments = [];
 
-        for (const payment of payments) {
-          const referenceId =
-            payment.referenceId || generateReferenceId() + Math.random();
+        // Helper function to find or create a PaymentsAccount by method
+        const findOrCreatePaymentsAccount = async (method, session) => {
+          let paymentAccount = await PaymentsAccount.findOne({ accountId: method }).session(session);
+          if (!paymentAccount) {
+            paymentAccount = new PaymentsAccount({
+              accountId: method,
+              accountName: 'NEW ACC',
+              paymentsIn: [],
+              paymentsOut: []
+            });
+          }
+          return paymentAccount;
+        };
 
-          if (existingPaymentsMap.has(referenceId)) {
-            // Existing payment, update it
-            const existingPayment = existingPaymentsMap.get(referenceId);
-            existingPayment.amount = parseFloat(payment.amount);
-            existingPayment.date = payment.date
-              ? new Date(payment.date)
-              : undefined;
-            existingPayment.submittedBy = payment.submittedBy.trim();
-            existingPayment.remark = payment.remark
-              ? payment.remark.trim()
-              : '';
-            existingPayment.method = payment.method
-              ? payment.method.trim()
-              : existingPayment.method;
-            existingPayment.invoiceNo = payment.invoiceNo
-              ? payment.invoiceNo.trim()
-              : existingPayment.invoiceNo;
+        for (const payment of payments) {
+          const {
+            referenceId: incomingRefId,
+            amount,
+            date,
+            submittedBy,
+            remark,
+            method,
+            invoiceNo
+          } = payment;
+
+          const sanitizedMethod = method ? method.trim() : 'Cash';
+          const sanitizedInvoiceNo = invoiceNo ? invoiceNo.trim() : '';
+          const sanitizedSubmittedBy = submittedBy ? submittedBy.trim() : '';
+          const parsedAmount = parseFloat(amount);
+
+          // Generate a referenceId if not provided
+          let referenceId = incomingRefId;
+          if (!referenceId) {
+            referenceId = 'PAY' + Date.now().toString() + Math.random();
+          }
+
+          const existingPayment = existingPaymentsMap.get(referenceId);
+
+          if (existingPayment) {
+            // === Updating an Existing Payment ===
+            const oldMethod = existingPayment.method;
+            const oldInvoiceNo = existingPayment.invoiceNo;
+
+            // Update the payment in CustomerAccount
+            existingPayment.amount = parsedAmount;
+            existingPayment.date = date ? new Date(date) : existingPayment.date;
+            existingPayment.submittedBy = sanitizedSubmittedBy;
+            existingPayment.remark = remark ? remark.trim() : '';
+            existingPayment.method = sanitizedMethod;
+            existingPayment.invoiceNo = sanitizedInvoiceNo || existingPayment.invoiceNo;
             updatedPayments.push(existingPayment);
             existingPaymentsMap.delete(referenceId);
 
-            // Update payment in PaymentsAccount
-            await PaymentsAccount.updateOne(
-              { 'paymentsIn.referenceId': referenceId },
-              {
-                $set: {
-                  'paymentsIn.$.amount': parseFloat(payment.amount),
-                  'paymentsIn.$.date': payment.date
-                    ? new Date(payment.date)
-                    : undefined,
-                  'paymentsIn.$.submittedBy': payment.submittedBy.trim(),
-                  'paymentsIn.$.remark': payment.remark
-                    ? payment.remark.trim()
-                    : '',
-                  'paymentsIn.$.method': payment.method
-                    ? payment.method.trim()
-                    : 'Cash',
-                },
-              },
-              { session }
-            );
-
-            // Update payment in Billing model if associated
-            if (payment.invoiceNo) {
-              const invoiceNo = payment.invoiceNo.trim();
-              const existingBilling = await Billing.findOne({ invoiceNo })
-                .session(session)
-                .exec();
-              if (existingBilling) {
-                const billingPaymentIndex = existingBilling.payments.findIndex(
-                  (p) => p.referenceId === referenceId
+            // If payment method changed, move payment between PaymentAccounts
+            if (sanitizedMethod !== oldMethod) {
+              // Remove from old PaymentsAccount
+              const oldPaymentAccount = await PaymentsAccount.findOne({ accountId: oldMethod }).session(session);
+              if (oldPaymentAccount) {
+                oldPaymentAccount.paymentsIn = oldPaymentAccount.paymentsIn.filter(
+                  (p) => p.referenceId !== referenceId
                 );
-                if (billingPaymentIndex !== -1) {
-                  existingBilling.payments[billingPaymentIndex].amount =
-                    parseFloat(payment.amount);
-                  existingBilling.payments[billingPaymentIndex].date = payment.date
-                    ? new Date(payment.date)
-                    : undefined;
-                  existingBilling.payments[
-                    billingPaymentIndex
-                  ].submittedBy = payment.submittedBy.trim();
-                  existingBilling.payments[billingPaymentIndex].remark =
-                    payment.remark ? payment.remark.trim() : '';
-                  existingBilling.payments[billingPaymentIndex].method = payment.method
-                    ? payment.method.trim()
-                    : 'Cash';
-                  existingBilling.markModified('payments');
+                await oldPaymentAccount.save({ session });
+              }
 
-                  // Recalculate billingAmountReceived and paymentStatus
-                  existingBilling.billingAmountReceived =
-                    existingBilling.payments.reduce(
-                      (total, payment) => total + (payment.amount || 0),
-                      0
-                    );
-                  const netAmount = existingBilling.grandTotal || 0;
-                  if (
-                    existingBilling.billingAmountReceived >= netAmount
-                  ) {
-                    existingBilling.paymentStatus = 'Paid';
-                  } else if (existingBilling.billingAmountReceived > 0) {
-                    existingBilling.paymentStatus = 'Partial';
-                  } else {
-                    existingBilling.paymentStatus = 'Unpaid';
-                  }
-
-                  await existingBilling.save({ session });
+              // Add to new PaymentsAccount
+              const newPaymentAccount = await findOrCreatePaymentsAccount(sanitizedMethod, session);
+              newPaymentAccount.paymentsIn.push({
+                amount: parsedAmount,
+                method: sanitizedMethod,
+                submittedBy: sanitizedSubmittedBy,
+                remark: remark ? remark.trim() : '',
+                date: date ? new Date(date) : new Date(),
+                referenceId,
+              });
+              await newPaymentAccount.save({ session });
+            } else {
+              // Method unchanged, just update in the same PaymentsAccount
+              const samePaymentAccount = await PaymentsAccount.findOne({ accountId: sanitizedMethod }).session(session);
+              if (samePaymentAccount) {
+                const payIndex = samePaymentAccount.paymentsIn.findIndex((p) => p.referenceId === referenceId);
+                if (payIndex !== -1) {
+                  samePaymentAccount.paymentsIn[payIndex].amount = parsedAmount;
+                  samePaymentAccount.paymentsIn[payIndex].date = date ? new Date(date) : samePaymentAccount.paymentsIn[payIndex].date;
+                  samePaymentAccount.paymentsIn[payIndex].submittedBy = sanitizedSubmittedBy;
+                  samePaymentAccount.paymentsIn[payIndex].remark = remark ? remark.trim() : '';
+                  samePaymentAccount.paymentsIn[payIndex].method = sanitizedMethod;
+                  await samePaymentAccount.save({ session });
                 }
               }
             }
-          } else {
-            // New payment, add it
-            const newPayment = {
-              amount: parseFloat(payment.amount),
-              date: payment.date ? new Date(payment.date) : new Date(),
-              submittedBy: payment.submittedBy.trim(),
-              remark: payment.remark ? payment.remark.trim() : '',
-              referenceId: referenceId,
-              method: payment.method ? payment.method.trim() : 'Cash',
-              invoiceNo: payment.invoiceNo ? payment.invoiceNo.trim() : undefined,
-            };
-            updatedPayments.push(newPayment);
 
-            // Add payment to PaymentsAccount
-            const paymentMethod = payment.method
-              ? payment.method.trim()
-              : 'Cash';
-            let paymentAccount = await PaymentsAccount.findOne({
-              accountId: paymentMethod,
-            }).session(session);
-            if (!paymentAccount) {
-              paymentAccount = new PaymentsAccount({
-                accountId: paymentMethod,
-                accountName: paymentMethod,
-                paymentsIn: [],
-                paymentsOut: [],
-              });
+            // If invoiceNo changed, remove from old Billing and add to new Billing
+            if (sanitizedInvoiceNo !== oldInvoiceNo && oldInvoiceNo) {
+              // Remove payment from old Billing's payments
+              await Billing.updateOne(
+                { invoiceNo: oldInvoiceNo },
+                { $pull: { payments: { referenceId } } },
+                { session }
+              );
+
+              // Add to new Billing if exists
+              if (sanitizedInvoiceNo) {
+                const newBilling = await Billing.findOne({ invoiceNo: sanitizedInvoiceNo })
+                  .session(session)
+                  .exec();
+                if (newBilling) {
+                  newBilling.payments.push({
+                    amount: parsedAmount,
+                    method: sanitizedMethod,
+                    date: date ? new Date(date) : new Date(),
+                    referenceId,
+                    remark: remark ? remark.trim() : '',
+                    invoiceNo: sanitizedInvoiceNo,
+                  });
+                  await newBilling.save({ session });
+                }
+              }
+            } else {
+              // InvoiceNo not changed, just update in existing Billing if present
+              if (existingPayment.invoiceNo) {
+                const currentBilling = await Billing.findOne({
+                  invoiceNo: existingPayment.invoiceNo,
+                  'payments.referenceId': referenceId,
+                }).session(session).exec();
+
+                if (currentBilling) {
+                  const billingPaymentIndex = currentBilling.payments.findIndex((p) => p.referenceId === referenceId);
+                  if (billingPaymentIndex !== -1) {
+                    currentBilling.payments[billingPaymentIndex].amount = parsedAmount;
+                    currentBilling.payments[billingPaymentIndex].date = date
+                      ? new Date(date)
+                      : currentBilling.payments[billingPaymentIndex].date;
+                    currentBilling.payments[billingPaymentIndex].submittedBy = sanitizedSubmittedBy;
+                    currentBilling.payments[billingPaymentIndex].remark = remark ? remark.trim() : '';
+                    currentBilling.payments[billingPaymentIndex].method = sanitizedMethod;
+                    await currentBilling.save({ session });
+                  }
+                }
+              }
             }
+
+          } else {
+            // === Creating a New Payment ===
+            const newPaymentData = {
+              amount: parsedAmount,
+              date: date ? new Date(date) : new Date(),
+              submittedBy: sanitizedSubmittedBy,
+              remark: remark ? remark.trim() : '',
+              referenceId,
+              method: sanitizedMethod,
+              invoiceNo: sanitizedInvoiceNo,
+            };
+            updatedPayments.push(newPaymentData);
+
+            // Add to PaymentsAccount
+            const paymentAccount = await PaymentsAccount.findOne({accountId: sanitizedMethod}, session);
             paymentAccount.paymentsIn.push({
-              amount: parseFloat(payment.amount),
-              method: paymentMethod,
-              submittedBy: payment.submittedBy.trim(),
-              remark: payment.remark ? payment.remark.trim() : '',
-              date: payment.date ? new Date(payment.date) : new Date(),
+              amount: parsedAmount,
+              method: sanitizedMethod,
+              submittedBy: sanitizedSubmittedBy,
+              remark: remark ? remark.trim() : '',
+              date: date ? new Date(date) : new Date(),
               referenceId,
             });
             await paymentAccount.save({ session });
 
-            // Associate payment with Billing if invoiceNo is provided and exists
-            if (payment.invoiceNo) {
-              const invoiceNo = payment.invoiceNo.trim();
-              const existingBilling = await Billing.findOne({ invoiceNo })
+            // Add to Billing if invoiceNo given and exists
+            if (sanitizedInvoiceNo) {
+              const existingBilling = await Billing.findOne({ invoiceNo: sanitizedInvoiceNo })
                 .session(session)
                 .exec();
               if (existingBilling) {
                 existingBilling.payments.push({
-                  amount: parseFloat(payment.amount),
-                  method: paymentMethod,
-                  date: payment.date ? new Date(payment.date) : new Date(),
+                  amount: parsedAmount,
+                  method: sanitizedMethod,
+                  date: date ? new Date(date) : new Date(),
                   referenceId,
-                  remark: payment.remark ? payment.remark.trim() : '',
-                  invoiceNo,
+                  remark: remark ? remark.trim() : '',
+                  invoiceNo: sanitizedInvoiceNo,
                 });
-
-                // Recalculate billingAmountReceived and paymentStatus
-                existingBilling.billingAmountReceived =
-                  existingBilling.payments.reduce(
-                    (total, payment) => total + (payment.amount || 0),
-                    0
-                  );
-                const netAmount = existingBilling.grandTotal || 0;
-                if (existingBilling.billingAmountReceived >= netAmount) {
-                  existingBilling.paymentStatus = 'Paid';
-                } else if (existingBilling.billingAmountReceived > 0) {
-                  existingBilling.paymentStatus = 'Partial';
-                } else {
-                  existingBilling.paymentStatus = 'Unpaid';
-                }
-
                 await existingBilling.save({ session });
               }
             }
@@ -510,15 +497,19 @@ customerRouter.put(
         }
 
         // Remove any payments that are no longer in the updated list
-        for (const [referenceId, paymentToDelete] of existingPaymentsMap) {
-          // Remove payment from PaymentsAccount
-          await PaymentsAccount.updateOne(
-            { 'paymentsIn.referenceId': referenceId },
-            { $pull: { paymentsIn: { referenceId } } },
-            { session }
-          );
+        for (const [referenceId, oldPayment] of existingPaymentsMap) {
+          // This means these payments were removed by the user (not present in updatedPayments)
+          // Remove from CustomerAccount is already handled by not including them in updatedPayments
+          // Remove from old PaymentsAccount
+          const oldPaymentAccount = await PaymentsAccount.findOne({ accountId: oldPayment.method }).session(session);
+          if (oldPaymentAccount) {
+            oldPaymentAccount.paymentsIn = oldPaymentAccount.paymentsIn.filter(
+              (p) => p.referenceId !== referenceId
+            );
+            await oldPaymentAccount.save({ session });
+          }
 
-          // Remove payment from Billing model
+          // Remove from Billing
           await Billing.updateMany(
             { 'payments.referenceId': referenceId },
             { $pull: { payments: { referenceId } } },
@@ -526,11 +517,11 @@ customerRouter.put(
           );
         }
 
-        // Update the account's payments
+        // Assign updated payments to the account
         account.payments = updatedPayments;
       }
 
-      // Optionally update userId if necessary
+      // Update userId if provided
       if (userId !== undefined) {
         account.userId = userId;
       }
@@ -549,60 +540,46 @@ customerRouter.put(
       if (account.pendingAmount < 0) {
         await session.abortTransaction();
         session.endSession();
-        return res
-          .status(400)
-          .json({ message: 'Paid amount exceeds total bill amount' });
+        return res.status(400).json({ message: 'Paid amount exceeds total bill amount' });
       }
 
+      // Recalculate payment status in Billing docs if needed:
+      // Just ensure consistency. We'll do it for all Billings that were affected. 
+      // A simple approach: Find all invoiceNos from account.bills and refresh them.
+      // (If you prefer efficiency, track changed invoiceNos only, but here for clarity we do all.)
+      for (const bill of account.bills) {
+        const invoiceNo = bill.invoiceNo.trim();
+        const billingDoc = await Billing.findOne({ invoiceNo }).session(session);
+        if (billingDoc) {
+          billingDoc.billingAmountReceived = (billingDoc.payments || []).reduce(
+            (total, p) => total + (p.amount || 0),
+            0
+          );
+          const netAmount = billingDoc.grandTotal || 0;
+          if (billingDoc.billingAmountReceived >= netAmount) {
+            billingDoc.paymentStatus = "Paid";
+          } else if (billingDoc.billingAmountReceived > 0) {
+            billingDoc.paymentStatus = "Partial";
+          } else {
+            billingDoc.paymentStatus = "Unpaid";
+          }
+          await billingDoc.save({ session });
+        }
+      }
 
+      // Update PaymentAccounts balances:
+      const paymentAccounts = await PaymentsAccount.find({}).session(session);
+      for (const pa of paymentAccounts) {
+        const totalIn = pa.paymentsIn.reduce((acc, p) => acc + p.amount, 0);
+        const totalOut = pa.paymentsOut.reduce((acc, p) => acc + p.amount, 0);
+        pa.balanceAmount = totalIn - totalOut;
+        await pa.save({ session });
+      }
 
-              // Recalculate balance
-  const paymentAccount = await PaymentsAccount.findOne({},null,{ session });
-  const billingSchemaAccount = await Billing.findOne({}, null, { session });
-
-  if (billingSchemaAccount) {
-    // Ensure payments array exists before reducing
-    billingSchemaAccount.billingAmountReceived = (billingSchemaAccount.payments || []).reduce(
-      (total, payment) => total + (payment.amount || 0),
-      0
-    );
-  
-    // Calculate net amount
-    const netAmount = billingSchemaAccount.grandTotal || 0;
-  
-    // Update payment status based on billing amount received
-    if (billingSchemaAccount.billingAmountReceived >= netAmount) {
-      billingSchemaAccount.paymentStatus = "Paid";
-    } else if (billingSchemaAccount.billingAmountReceived > 0) {
-      billingSchemaAccount.paymentStatus = "Partial";
-    } else {
-      billingSchemaAccount.paymentStatus = "Unpaid";
-    }
-  
-    // Save the updated document
-    await billingSchemaAccount.save({ session });
-  }  
-
-  if (paymentAccount) {
-    const totalIn = paymentAccount.paymentsIn.reduce(
-      (acc, payment) => acc + payment.amount,
-      0
-    );
-    const totalOut = paymentAccount.paymentsOut.reduce(
-      (acc, payment) => acc + payment.amount,
-      0
-    );
-
-    paymentAccount.balanceAmount = totalIn - totalOut;
-
-    // Save the updated balance
-    await paymentAccount.save({ session });
-  }
-
-      // Save the updated account
+      // Save updated customer account
       await account.save({ session });
 
-      // Commit the transaction
+      // Commit transaction
       await session.commitTransaction();
       session.endSession();
 
@@ -620,6 +597,9 @@ customerRouter.put(
     }
   }
 );
+
+
+
 
 
 

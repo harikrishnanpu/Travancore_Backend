@@ -236,7 +236,7 @@ socket.on('update-location', async (data) => {
 
 });
 
-httpServer.listen(port, () => {
+httpServer.listen(port,'0.0.0.0', () => {
   console.log(`Serve at http://localhost:${port}`);
 });
 

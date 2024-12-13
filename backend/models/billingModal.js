@@ -8,6 +8,7 @@ const BillingSchema = new mongoose.Schema(
     approvedBy: { type: String },
     submittedBy: { type: String },
     invoiceDate: { type: Date, required: true },
+    showroom: {type: String, required: true},
     salesmanName: { type: String, required: true },
     salesmanPhoneNumber: { type: String },
     expectedDeliveryDate: { type: Date, required: true },

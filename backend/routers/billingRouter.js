@@ -42,6 +42,7 @@ billingRouter.post('/create', async (req, res) => {
       transportation = 0,
       handlingcharge = 0,
       remark,
+      showroom,
       userId,
       products, // Expected to be an array of objects with item_id and quantity
     } = req.body;
@@ -168,6 +169,7 @@ billingRouter.post('/create', async (req, res) => {
       customerContactNumber: customerContactNumber.trim(),
       marketedBy: marketedBy ? marketedBy.trim() : '',
       submittedBy: userId,
+      showroom: showroom,
       handlingCharge: parseFloat(handlingcharge),
       remark: remark ? remark.trim() : '',
       products,
@@ -393,6 +395,7 @@ billingRouter.post('/edit/:id', async (req, res) => {
       paymentReceivedDate,
       marketedBy,
       userId,
+      showroom,
       salesmanPhoneNumber,
     } = req.body;
 
@@ -781,6 +784,7 @@ billingRouter.post('/edit/:id', async (req, res) => {
       billingAmount: parseFloat(billingAmount) || 0,
       grandTotal: parseFloat(grandTotal) || 0,
       discount: parseFloat(discount) || 0,
+      showroom: showroom,
       unloading: parseFloat(unloading) || 0,
       transportation: parseFloat(transportation) || 0,
       handlingCharge: parseFloat(handlingcharge) || 0,
@@ -900,11 +904,14 @@ billingRouter.delete('/billings/delete/:id', async (req, res) => {
     const customerAccount = await CustomerAccount.findOne({
       customerId: customerId.trim(),
     }).session(session);
-    if (!customerAccount) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ message: 'Customer account not found.' });
-    }
+
+    // if (!customerAccount) {
+    //   await session.abortTransaction();
+    //   session.endSession();
+    //   return res.status(404).json({ message: 'Customer account not found.' });
+    // }
+
+    if(customerAccount){
 
     // === 4. Remove the Billing from Customer's Bills ===
     const billIndex = customerAccount.bills.findIndex(
@@ -949,6 +956,8 @@ billingRouter.delete('/billings/delete/:id', async (req, res) => {
       }
     }
 
+  }
+
     // === 6. Restore Product Stock ===
     if (products && products.length > 0) {
       for (const item of products) {
@@ -986,9 +995,11 @@ billingRouter.delete('/billings/delete/:id', async (req, res) => {
     // === 7. Remove the Billing Entry ===
     await Billing.findByIdAndRemove(billingId).session(session);
 
-    // === 8. Save the Updated Customer Account ===
-    await customerAccount.save({ session });
-
+    if(customerAccount){
+      // === 8. Save the Updated Customer Account ===
+      await customerAccount.save({ session });
+    }
+      
     // === 9. Commit the Transaction ===
     await session.commitTransaction();
     session.endSession();
@@ -1312,10 +1323,9 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
       .sort({ invoiceNo: -1 })
       .collation({ locale: "en", numericOrdering: true });
 
-      let lastGeneratedCustomer;
+    let lastGeneratedCustomer = null;
 
-      if(billing){
-
+    if (billing) {
       lastGeneratedCustomer = await CustomerAccount.aggregate([
         {
           $addFields: {
@@ -1323,7 +1333,7 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
               $toInt: {
                 $cond: {
                   if: { $regexMatch: { input: "$customerId", regex: /^CUS\d+$/ } }, // Check if format matches
-                  then: { $substr: ["$customerId", 4, -1] }, // Extract numeric part
+                  then: { $substr: ["$customerId", 3, -1] }, // Extract numeric part (corrected index)
                   else: "0" // Default to 0 for invalid or missing customerId
                 }
               }
@@ -1338,25 +1348,25 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
         }
       ]);
     }
-      
 
-      let lastInvoice = 'KK0'
-      let lastCustomerId = 'CUS001'
+    let lastInvoice = 'KK0';
+    let lastCustomerId = 'CUS0';
 
-      if(billing){
-        lastInvoice = billing.invoiceNo
-      }
+    if (billing) {
+      lastInvoice = billing.invoiceNo;
+    }
 
-      if(lastGeneratedCustomer){
-        lastCustomerId = lastGeneratedCustomer[0].customerId
-      }
-    
-      res.json({lastInvoice, lastCustomerId});
+    if (lastGeneratedCustomer && lastGeneratedCustomer.length > 0) {
+      lastCustomerId = lastGeneratedCustomer[0].customerId;
+    }
+
+    res.json({ lastInvoice, lastCustomerId });
   } catch (error) {
-    console.log(error)
-    res.status(500).json({ message: 'Error fetching last order' });
+    console.error('Error fetching last order details:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 });
+
 
 
 
