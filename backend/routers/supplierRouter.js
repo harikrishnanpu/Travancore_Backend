@@ -205,46 +205,103 @@ supplierRouter.get('/get/:id', async (req, res) => {
  */
 
 
+
 supplierRouter.put(
   '/:id/update',
   [
-    // Validation
-    body('supplierName').trim().notEmpty().withMessage('Supplier Name cannot be empty'),
-    body('supplierAddress').trim().notEmpty().withMessage('Supplier Address cannot be empty'),
-    body('bills').isArray().withMessage('Bills must be an array'),
-    body('bills.*.invoiceNo').trim().notEmpty().withMessage('Invoice Number is required for each bill'),
-    body('bills.*.billAmount').isFloat({ min: 0 }).withMessage('Bill Amount must be a positive number'),
-    body('bills.*.invoiceDate').optional().isISO8601().toDate().withMessage('Invalid Invoice Date'),
-    body('payments').isArray().withMessage('Payments must be an array'),
-    body('payments.*.amount').isFloat({ min: 0 }).withMessage('Payment Amount must be a positive number'),
-    body('payments.*.submittedBy').trim().notEmpty().withMessage('Submitted By is required for each payment'),
-    body('payments.*.method').trim().notEmpty().withMessage('Payment method is required'),
-    body('payments.*.date').optional().isISO8601().toDate().withMessage('Invalid Payment Date'),
-    body('payments.*.remark').optional().trim(),
-    body('supplierId').trim().notEmpty().withMessage('Supplier ID cannot be empty'),
-    body('sellerGst').optional().trim(), // Assuming sellerGst might be updated
+    // Validation Middlewares
+    body('supplierName')
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('Supplier Name cannot be empty'),
+    body('supplierAddress')
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('Supplier Address cannot be empty'),
+    body('sellerGst')
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('Seller GST cannot be empty'),
+    body('supplierId')
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('Supplier ID cannot be empty'),
+    body('bills')
+      .optional()
+      .isArray()
+      .withMessage('Bills must be an array'),
+    body('bills.*.invoiceNo')
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('Invoice Number is required for each bill'),
+    body('bills.*.billAmount')
+      .optional()
+      .isFloat({ min: 0 })
+      .withMessage('Bill Amount must be a positive number'),
+    body('bills.*.invoiceDate')
+      .optional()
+      .isISO8601()
+      .toDate()
+      .withMessage('Invalid Invoice Date'),
+    body('payments')
+      .optional()
+      .isArray()
+      .withMessage('Payments must be an array'),
+    body('payments.*.referenceId')
+      .optional()
+      .trim(),
+    body('payments.*.amount')
+      .optional()
+      .isFloat({ min: 0 })
+      .withMessage('Payment Amount must be a positive number'),
+    body('payments.*.submittedBy')
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('Submitted By is required for each payment'),
+    body('payments.*.method')
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('Payment method is required'),
+    body('payments.*.date')
+      .optional()
+      .isISO8601()
+      .toDate()
+      .withMessage('Invalid Payment Date'),
+    body('payments.*.remark')
+      .optional()
+      .trim(),
+    // Add any additional validations as needed
   ],
   async (req, res) => {
-    // Validate Request
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
+      // Handle validation errors
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ errors: errors.array() });
+      }
+
       const {
         supplierName,
+        supplierAddress,
+        sellerGst,
+        supplierId,
         bills,
         payments,
-        supplierAddress,
-        supplierId,
-        sellerGst, // Include sellerGst if it's part of the update
       } = req.body;
 
-      // Fetch the SupplierAccount
+      // Fetch the SupplierAccount by ID
       const supplierAccount = await SupplierAccount.findById(req.params.id).session(session);
       if (!supplierAccount) {
         throw { status: 404, message: 'Supplier Account not found' };
@@ -261,7 +318,7 @@ supplierRouter.put(
         });
       }
 
-      // Update Basic Fields
+      // Update Basic Fields in SupplierAccount and SellerPayment
       if (supplierName !== undefined) {
         supplierAccount.sellerName = supplierName.trim();
         sellerPayment.sellerName = supplierName.trim();
@@ -277,14 +334,12 @@ supplierRouter.put(
 
       if (supplierId !== undefined && supplierId.trim() !== supplierAccount.sellerId) {
         // Update sellerId in both SupplierAccount and SellerPayment
-        const oldSellerId = supplierAccount.sellerId;
         supplierAccount.sellerId = supplierId.trim();
         sellerPayment.sellerId = supplierId.trim();
-
         // Additional logic may be needed if sellerId changes significantly
       }
 
-      // --- Handle Bills ---
+      // === Handle Bills ===
       if (bills !== undefined) {
         // Check for duplicate invoice numbers within the provided bills
         const invoiceNos = bills.map((bill) => bill.invoiceNo.trim());
@@ -292,13 +347,6 @@ supplierRouter.put(
         if (invoiceNos.length !== uniqueInvoiceNos.size) {
           throw { status: 400, message: 'Duplicate invoice numbers are not allowed within bills.' };
         }
-
-        const existingInvoiceNos = supplierAccount.bills.map((bill) => bill.invoiceNo);
-        const newInvoiceNos = invoiceNos;
-
-        // Determine added and removed bills
-        const addedBills = bills.filter((bill) => !existingInvoiceNos.includes(bill.invoiceNo.trim()));
-        const removedBills = supplierAccount.bills.filter((bill) => !newInvoiceNos.includes(bill.invoiceNo));
 
         // Update bills in SupplierAccount
         supplierAccount.bills = bills.map((bill) => ({
@@ -309,271 +357,361 @@ supplierRouter.put(
 
         // Update billings in SellerPayment
         // Remove old bills from sellerPayment that are no longer present
+        const updatedInvoiceNos = new Set(invoiceNos);
         sellerPayment.billings = sellerPayment.billings.filter(
-          (billing) => !removedBills.some((rb) => rb.invoiceNo === billing.invoiceNo)
+          (billing) => updatedInvoiceNos.has(billing.invoiceNo)
         );
 
         // Add newly added bills to sellerPayment
-        for (const bill of addedBills) {
-          sellerPayment.billings.push({
-            amount: parseFloat(bill.billAmount),
-            date: bill.invoiceDate ? new Date(bill.invoiceDate) : new Date(),
-            invoiceNo: bill.invoiceNo.trim(),
-          });
+        for (const bill of bills) {
+          const exists = sellerPayment.billings.some((b) => b.invoiceNo === bill.invoiceNo.trim());
+          if (!exists) {
+            sellerPayment.billings.push({
+              amount: parseFloat(bill.billAmount),
+              date: bill.invoiceDate ? new Date(bill.invoiceDate) : new Date(),
+              invoiceNo: bill.invoiceNo.trim(),
+            });
+          }
         }
       }
 
-      // --- Handle Payments ---
-      // Fetch existing payments from SupplierAccount
-      const existingPayments = supplierAccount.payments.map((p) => ({
-        ...p.toObject(),
-      }));
+      // === Handle Payments ===
+      if (payments !== undefined) {
+        // Fetch existing payments from SupplierAccount
+        const existingPayments = supplierAccount.payments.map((p) => ({
+          ...p.toObject(),
+        }));
 
-      // Map existing payments by _id for easy lookup
-      const existingPaymentsMap = new Map(existingPayments.map((p) => [p._id.toString(), p]));
+        // Map existing payments by referenceId for easy lookup
+        const existingPaymentsMap = new Map(existingPayments.map((p) => [p.referenceId, p]));
 
-      // Prepare to track changes
-      const paymentsToAdd = [];
-      const paymentsToUpdate = [];
-      const paymentsToRemove = [];
+        // Prepare to track changes
+        const paymentsToAdd = [];
+        const paymentsToUpdate = [];
+        const paymentsToRemove = [];
 
-      // Process incoming payments
-      for (const payment of payments) {
-        if (payment._id) {
-          // Existing payment, check if it needs to be updated
-          const existingPayment = existingPaymentsMap.get(payment._id.toString());
+        // Process incoming payments
+        for (const payment of payments) {
+          const {
+            referenceId: incomingRefId,
+            amount,
+            date,
+            submittedBy,
+            remark,
+            method,
+            invoiceNo,
+          } = payment;
+
+          // Sanitize inputs
+          const sanitizedMethod = method ? method.trim() : 'Cash';
+          const sanitizedInvoiceNo = invoiceNo ? invoiceNo.trim() : '';
+          const sanitizedSubmittedBy = submittedBy ? submittedBy.trim() : '';
+          const parsedAmount = parseFloat(amount);
+
+          // Generate a referenceId if not provided
+          let referenceId = incomingRefId;
+          if (!referenceId) {
+            referenceId = 'PAY' + Date.now().toString();
+          }
+
+          const existingPayment = existingPaymentsMap.get(referenceId);
+
           if (existingPayment) {
-            // Check for changes in amount or method
-            const isAmountChanged = parseFloat(payment.amount) !== existingPayment.amount;
-            const isMethodChanged = payment.method.trim() !== existingPayment.method;
+            // === Updating an Existing Payment ===
+            const oldMethod = existingPayment.method;
 
-            if (isAmountChanged || isMethodChanged) {
+            // Check if method has changed
+            const isMethodChanged = sanitizedMethod !== oldMethod;
+
+            // Check if other fields have changed
+            const isAmountChanged = parsedAmount !== existingPayment.amount;
+            const isDateChanged = date ? new Date(date).getTime() !== new Date(existingPayment.date).getTime() : false;
+            const isRemarkChanged = remark ? remark.trim() !== existingPayment.remark : existingPayment.remark !== '';
+            const isSubmittedByChanged = sanitizedSubmittedBy !== existingPayment.submittedBy;
+            const isInvoiceNoChanged = sanitizedInvoiceNo !== existingPayment.invoiceNo;
+
+            if (isMethodChanged || isAmountChanged || isDateChanged || isRemarkChanged || isSubmittedByChanged || isInvoiceNoChanged) {
               paymentsToUpdate.push({
-                ...payment,
+                referenceId,
+                amount: parsedAmount,
+                date: date ? new Date(date) : existingPayment.date,
+                submittedBy: sanitizedSubmittedBy,
+                remark: remark ? remark.trim() : '',
+                method: sanitizedMethod,
+                invoiceNo: sanitizedInvoiceNo || existingPayment.invoiceNo,
                 original: existingPayment,
               });
             }
 
             // Remove from existingPaymentsMap to identify remaining as toRemove
-            existingPaymentsMap.delete(payment._id.toString());
+            existingPaymentsMap.delete(referenceId);
           } else {
-            // Payment _id provided but not found in existing payments
-            throw { status: 400, message: `Payment with ID ${payment._id} not found.` };
+            // New payment to add
+            paymentsToAdd.push({
+              referenceId,
+              amount: parsedAmount,
+              date: date ? new Date(date) : new Date(),
+              submittedBy: sanitizedSubmittedBy,
+              remark: remark ? remark.trim() : '',
+              method: sanitizedMethod,
+              invoiceNo: sanitizedInvoiceNo,
+            });
           }
-        } else {
-          // New payment to add
-          paymentsToAdd.push(payment);
         }
-      }
 
-      // Remaining payments in existingPaymentsMap are to be removed
-      for (const [id, payment] of existingPaymentsMap.entries()) {
-        paymentsToRemove.push(payment);
-      }
-
-      // --- Update SupplierAccount Payments ---
-      // Remove payments
-      supplierAccount.payments = supplierAccount.payments.filter(
-        (p) => !paymentsToRemove.some((rm) => rm._id.toString() === p._id.toString())
-      );
-
-      // Update payments
-      for (const paymentUpdate of paymentsToUpdate) {
-        const index = supplierAccount.payments.findIndex((p) => p._id.toString() === paymentUpdate._id.toString());
-        if (index !== -1) {
-          supplierAccount.payments[index].amount = parseFloat(paymentUpdate.amount);
-          supplierAccount.payments[index].date = paymentUpdate.date ? new Date(paymentUpdate.date) : new Date();
-          supplierAccount.payments[index].method = paymentUpdate.method.trim();
-          supplierAccount.payments[index].submittedBy = paymentUpdate.submittedBy.trim();
-          supplierAccount.payments[index].remark = paymentUpdate.remark ? paymentUpdate.remark.trim() : '';
+        // Remaining payments in existingPaymentsMap are to be removed
+        for (const [refId, payment] of existingPaymentsMap.entries()) {
+          paymentsToRemove.push(payment);
         }
-      }
 
-      // Add new payments
-      for (const newPayment of paymentsToAdd) {
-        const referenceId = newPayment.referenceId
-          ? newPayment.referenceId
-          : 'PAY' + Date.now().toString() + Math.floor(Math.random() * 1000);
-
-        supplierAccount.payments.push({
-          _id: new mongoose.Types.ObjectId(),
-          amount: parseFloat(newPayment.amount),
-          date: newPayment.date ? new Date(newPayment.date) : new Date(),
-          method: newPayment.method.trim(),
-          submittedBy: newPayment.submittedBy.trim(),
-          remark: newPayment.remark ? newPayment.remark.trim() : '',
-          referenceId: referenceId,
-        });
-      }
-
-      // --- Update SellerPayment Payments ---
-      // Remove payments
-      sellerPayment.payments = sellerPayment.payments.filter(
-        (p) => !paymentsToRemove.some((rm) => rm.referenceId === p.referenceId)
-      );
-
-      // Update payments
-      for (const paymentUpdate of paymentsToUpdate) {
-        const spIndex = sellerPayment.payments.findIndex(
-          (p) => p.referenceId === paymentUpdate.original.referenceId
+        // === Update SupplierAccount Payments ===
+        // Remove payments
+        supplierAccount.payments = supplierAccount.payments.filter(
+          (p) => !paymentsToRemove.some((rm) => rm.referenceId === p.referenceId)
         );
-        if (spIndex !== -1) {
-          sellerPayment.payments[spIndex].amount = parseFloat(paymentUpdate.amount);
-          sellerPayment.payments[spIndex].date = paymentUpdate.date ? new Date(paymentUpdate.date) : new Date();
-          sellerPayment.payments[spIndex].method = paymentUpdate.method.trim();
-          sellerPayment.payments[spIndex].submittedBy = paymentUpdate.submittedBy.trim();
-          sellerPayment.payments[spIndex].remark = paymentUpdate.remark ? paymentUpdate.remark.trim() : '';
+
+        // Update existing payments
+        for (const paymentUpdate of paymentsToUpdate) {
+          const index = supplierAccount.payments.findIndex((p) => p.referenceId === paymentUpdate.referenceId);
+          if (index !== -1) {
+            supplierAccount.payments[index].amount = paymentUpdate.amount;
+            supplierAccount.payments[index].date = paymentUpdate.date;
+            supplierAccount.payments[index].submittedBy = paymentUpdate.submittedBy;
+            supplierAccount.payments[index].remark = paymentUpdate.remark;
+            supplierAccount.payments[index].method = paymentUpdate.method;
+            supplierAccount.payments[index].invoiceNo = paymentUpdate.invoiceNo;
+          }
         }
-      }
 
-      // Add new payments to SellerPayment
-      for (const newPayment of paymentsToAdd) {
-        const referenceId = newPayment.referenceId
-          ? newPayment.referenceId
-          : 'PAY' + Date.now().toString() + Math.floor(Math.random() * 1000);
+        // Add new payments
+        for (const newPayment of paymentsToAdd) {
+          supplierAccount.payments.push({
+            _id: new mongoose.Types.ObjectId(),
+            amount: newPayment.amount,
+            date: newPayment.date,
+            submittedBy: newPayment.submittedBy,
+            remark: newPayment.remark,
+            method: newPayment.method,
+            invoiceNo: newPayment.invoiceNo,
+            referenceId: newPayment.referenceId,
+          });
+        }
 
-        sellerPayment.payments.push({
-          amount: parseFloat(newPayment.amount),
-          date: newPayment.date ? new Date(newPayment.date) : new Date(),
-          method: newPayment.method.trim(),
-          submittedBy: newPayment.submittedBy.trim(),
-          remark: newPayment.remark ? newPayment.remark.trim() : '',
-          referenceId: referenceId,
-        });
-      }
+        // === Update SellerPayment Payments ===
+        // Remove payments
+        sellerPayment.payments = sellerPayment.payments.filter(
+          (p) => !paymentsToRemove.some((rm) => rm.referenceId === p.referenceId)
+        );
 
-      // --- Handle PaymentsAccount Updates ---
-      /**
-       * To ensure data consistency:
-       * - For payments to add: Add to the corresponding PaymentsAccount's paymentsOut
-       * - For payments to update:
-       *    - If method changed: Remove from old PaymentsAccount and add to new PaymentsAccount
-       *    - If amount changed: Update in the existing PaymentsAccount's paymentsOut
-       * - For payments to remove: Remove from the corresponding PaymentsAccount's paymentsOut
-       */
-
-      // Process removals
-      for (const payment of paymentsToRemove) {
-        const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method }).session(session);
-        if (paymentsAccount) {
-          paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
-            (po) => po.referenceId !== payment.referenceId
+        // Update existing payments
+        for (const paymentUpdate of paymentsToUpdate) {
+          const spIndex = sellerPayment.payments.findIndex(
+            (p) => p.referenceId === paymentUpdate.referenceId
           );
-          await paymentsAccount.save({ session });
+          if (spIndex !== -1) {
+            sellerPayment.payments[spIndex].amount = paymentUpdate.amount;
+            sellerPayment.payments[spIndex].date = paymentUpdate.date;
+            sellerPayment.payments[spIndex].submittedBy = paymentUpdate.submittedBy;
+            sellerPayment.payments[spIndex].remark = paymentUpdate.remark;
+            sellerPayment.payments[spIndex].method = paymentUpdate.method;
+            sellerPayment.payments[spIndex].invoiceNo = paymentUpdate.invoiceNo;
+          }
         }
-      }
 
-      // Process updates
-      for (const paymentUpdate of paymentsToUpdate) {
-        const { original, ...updatedFields } = paymentUpdate;
-        const referenceId = original.referenceId;
+        // Add new payments
+        for (const newPayment of paymentsToAdd) {
+          sellerPayment.payments.push({
+            amount: newPayment.amount,
+            date: newPayment.date,
+            submittedBy: newPayment.submittedBy,
+            remark: newPayment.remark,
+            method: newPayment.method,
+            invoiceNo: newPayment.invoiceNo,
+            referenceId: newPayment.referenceId,
+          });
+        }
 
-        // Check if method has changed
-        if (paymentUpdate.method.trim() !== original.method) {
-          // Remove from old PaymentsAccount
-          const oldPaymentsAccount = await PaymentsAccount.findOne({ accountId: original.method }).session(session);
-          if (oldPaymentsAccount) {
-            oldPaymentsAccount.paymentsOut = oldPaymentsAccount.paymentsOut.filter(
-              (po) => po.referenceId !== referenceId
+        // === Handle PaymentsAccount Updates ===
+        /**
+         * To ensure data consistency:
+         * - For payments to add: Add to the corresponding PaymentsAccount's paymentsOut
+         * - For payments to update:
+         *    - If method changed: Remove from old PaymentsAccount and add to new PaymentsAccount
+         *    - If only amount or other fields changed: Update in the existing PaymentsAccount's paymentsOut
+         * - For payments to remove: Remove from the corresponding PaymentsAccount's paymentsOut
+         */
+
+        // Process removals
+        for (const payment of paymentsToRemove) {
+          const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method }).session(session);
+          if (paymentsAccount) {
+            paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
+              (po) => po.referenceId !== payment.referenceId
             );
-            await oldPaymentsAccount.save({ session });
+            await paymentsAccount.save({ session });
+          }
+        }
+
+        // Process updates
+        for (const paymentUpdate of paymentsToUpdate) {
+          const { referenceId, method, amount, date, submittedBy, remark, invoiceNo, original } = paymentUpdate;
+
+          // Check if method has changed
+          if (method !== original.method) {
+            // Remove from old PaymentsAccount
+            const oldPaymentsAccount = await PaymentsAccount.findOne({ accountId: original.method }).session(session);
+            if (oldPaymentsAccount) {
+              oldPaymentsAccount.paymentsOut = oldPaymentsAccount.paymentsOut.filter(
+                (po) => po.referenceId !== referenceId
+              );
+              await oldPaymentsAccount.save({ session });
+            }
+
+            // Add to new PaymentsAccount
+            const newPaymentsAccount = await PaymentsAccount.findOne({ accountId: method }).session(session);
+            if (!newPaymentsAccount) {
+              throw { status: 404, message: `PaymentsAccount with accountId ${method} not found.` };
+            }
+
+            newPaymentsAccount.paymentsOut.push({
+              amount,
+              date,
+              method,
+              submittedBy,
+              remark,
+              referenceId,
+            });
+
+            await newPaymentsAccount.save({ session });
+          } else {
+            // Method hasn't changed, update the existing PaymentsAccount's paymentsOut
+            const paymentsAccount = await PaymentsAccount.findOne({ accountId: method }).session(session);
+            if (paymentsAccount) {
+              const paymentOut = paymentsAccount.paymentsOut.find((po) => po.referenceId === referenceId);
+              if (paymentOut) {
+                // Update only if necessary
+                let needsUpdate = false;
+
+                if (amount !== paymentOut.amount) needsUpdate = true;
+                if (date && new Date(date).getTime() !== new Date(paymentOut.date).getTime()) needsUpdate = true;
+                if (remark && remark.trim() !== paymentOut.remark) needsUpdate = true;
+                if (submittedBy && submittedBy.trim() !== paymentOut.submittedBy) needsUpdate = true;
+
+                if (needsUpdate) {
+                  paymentOut.amount = amount;
+                  paymentOut.date = date ? new Date(date) : paymentOut.date;
+                  paymentOut.submittedBy = submittedBy.trim();
+                  paymentOut.remark = remark ? remark.trim() : paymentOut.remark;
+                  // method remains the same
+
+                  await paymentsAccount.save({ session });
+                }
+              } else {
+                // If the paymentOut doesn't exist, it's a critical inconsistency
+                throw { status: 500, message: `PaymentOut with referenceId ${referenceId} not found in PaymentsAccount ${method}.` };
+              }
+            } else {
+              throw { status: 404, message: `PaymentsAccount with accountId ${method} not found.` };
+            }
           }
 
-          // Add to new PaymentsAccount
-          const newPaymentsAccount = await PaymentsAccount.findOne({ accountId: paymentUpdate.method.trim() }).session(session);
-          if (!newPaymentsAccount) {
-            throw { status: 404, message: `PaymentsAccount with accountId ${paymentUpdate.method.trim()} not found.` };
+          // === Optional: Handle InvoiceNo Changes in Billing Documents ===
+          // Since the user requested to remove billing modal updation, this section is omitted.
+          // If needed, similar logic can be implemented here.
+        }
+
+        // Process additions
+        for (const newPayment of paymentsToAdd) {
+          const { referenceId, method, amount, date, submittedBy, remark, invoiceNo } = newPayment;
+
+          // Add to PaymentsAccount
+          const paymentsAccount = await PaymentsAccount.findOne({ accountId: method }).session(session);
+          if (!paymentsAccount) {
+            throw { status: 404, message: `PaymentsAccount with accountId ${method} not found.` };
           }
 
-          // Find the updated payment details
-          const updatedPaymentDetails = payments.find((p) => p._id.toString() === paymentUpdate._id.toString());
-
-          newPaymentsAccount.paymentsOut.push({
-            amount: parseFloat(updatedPaymentDetails.amount),
-            date: updatedPaymentDetails.date ? new Date(updatedPaymentDetails.date) : new Date(),
-            method: updatedPaymentDetails.method.trim(),
-            submittedBy: updatedPaymentDetails.submittedBy.trim(),
-            remark: updatedPaymentDetails.remark ? updatedPaymentDetails.remark.trim() : '',
-            referenceId: referenceId,
+          paymentsAccount.paymentsOut.push({
+            amount,
+            method,
+            submittedBy,
+            remark,
+            date,
+            referenceId,
           });
 
-          await newPaymentsAccount.save({ session });
-        } else {
-          // Method hasn't changed, update the existing PaymentsAccount
-          const paymentsAccount = await PaymentsAccount.findOne({ accountId: paymentUpdate.method.trim() }).session(session);
-          if (paymentsAccount) {
-            const paymentOut = paymentsAccount.paymentsOut.find((po) => po.referenceId === referenceId);
-            if (paymentOut) {
-              paymentOut.amount = parseFloat(paymentUpdate.amount);
-              paymentOut.date = paymentUpdate.date ? new Date(paymentUpdate.date) : new Date();
-              paymentOut.method = paymentUpdate.method.trim();
-              paymentOut.submittedBy = paymentUpdate.submittedBy.trim();
-              paymentOut.remark = paymentUpdate.remark ? paymentUpdate.remark.trim() : '';
-              await paymentsAccount.save({ session });
-            } else {
-              // If the paymentOut doesn't exist, it's a critical inconsistency
-              throw { status: 500, message: `PaymentOut with referenceId ${referenceId} not found in PaymentsAccount ${paymentUpdate.method}.` };
-            }
-          } else {
-            throw { status: 404, message: `PaymentsAccount with accountId ${paymentUpdate.method.trim()} not found.` };
-          }
-        }
-      }
-
-      // Process additions
-      for (const newPayment of paymentsToAdd) {
-        const referenceId = newPayment.referenceId
-          ? newPayment.referenceId
-          : 'PAY' + Date.now().toString() + Math.floor(Math.random() * 1000);
-
-        const paymentsAccount = await PaymentsAccount.findOne({ accountId: newPayment.method.trim() }).session(session);
-        if (!paymentsAccount) {
-          throw { status: 404, message: `PaymentsAccount with accountId ${newPayment.method.trim()} not found.` };
+          await paymentsAccount.save({ session });
         }
 
-        paymentsAccount.paymentsOut.push({
-          amount: parseFloat(newPayment.amount),
-          date: newPayment.date ? new Date(newPayment.date) : new Date(),
-          method: newPayment.method.trim(),
-          submittedBy: newPayment.submittedBy.trim(),
-          remark: newPayment.remark ? newPayment.remark.trim() : '',
-          referenceId: referenceId,
-        });
+        // Remove any payments that are no longer in the updated list
+        for (const payment of paymentsToRemove) {
+          // Since billing modal updation is removed, we do not handle Billing documents here
+          // If needed, additional logic can be added
+        }
 
-        await paymentsAccount.save({ session });
+        // === Recalculate Totals ===
+        supplierAccount.totalBillAmount = supplierAccount.bills.reduce(
+          (acc, bill) => acc + (bill.billAmount || 0),
+          0
+        );
+        supplierAccount.paidAmount = supplierAccount.payments.reduce(
+          (acc, payment) => acc + (payment.amount || 0),
+          0
+        );
+        supplierAccount.pendingAmount = supplierAccount.totalBillAmount - supplierAccount.paidAmount;
+
+        if (supplierAccount.pendingAmount < 0) {
+          throw { status: 400, message: 'Paid amount exceeds total bill amount' };
+        }
+
+        // === Update PaymentAccounts balances ===
+        const paymentAccounts = await PaymentsAccount.find({}).session(session);
+        for (const pa of paymentAccounts) {
+          const totalIn = pa.paymentsIn.reduce(
+            (acc, payment) => acc + (payment.amount || 0),
+            0
+          );
+          const totalOut = pa.paymentsOut.reduce(
+            (acc, payment) => acc + (payment.amount || 0),
+            0
+          );
+          pa.balanceAmount = totalIn - totalOut;
+          await pa.save({ session });
+        }
+
+        // === Save Updated Documents ===
+        await supplierAccount.save({ session });
+        await sellerPayment.save({ session });
+
+        // === Commit Transaction ===
+        await session.commitTransaction();
+        session.endSession();
+
+        res.status(200).json({ message: 'Supplier account updated successfully.', account: supplierAccount });
+      } 
+    }catch (error) {
+        console.error('Error updating supplier account:', error);
+
+        // Abort the transaction on error
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
+        session.endSession();
+
+        // Handle custom errors
+        if (error.status && error.message) {
+          return res.status(error.status).json({ message: error.message });
+        }
+
+        // Handle duplicate key errors (e.g., duplicate supplierId)
+        if (error.code === 11000) {
+          const duplicateField = Object.keys(error.keyPattern)[0];
+          return res.status(400).json({ message: `${duplicateField} must be unique.` });
+        }
+
+        res.status(500).json({ message: 'Server Error', error: error.message });
       }
-
-      // --- Save Updated Documents ---
-      await supplierAccount.save({ session });
-      await sellerPayment.save({ session });
-
-      // Commit Transaction
-      await session.commitTransaction();
-      session.endSession();
-
-      res.json({ message: 'Supplier account updated successfully', account: supplierAccount });
-    } catch (error) {
-      // Abort Transaction
-      await session.abortTransaction();
-      session.endSession();
-
-      console.error('Error updating supplier account:', error);
-
-      // Custom error handling
-      if (error.status && error.message) {
-        return res.status(error.status).json({ message: error.message });
-      }
-
-      // Handle duplicate key errors (e.g., duplicate supplierId)
-      if (error.code === 11000) {
-        const duplicateField = Object.keys(error.keyPattern)[0];
-        return res.status(400).json({ message: `${duplicateField} must be unique.` });
-      }
-
-      res.status(500).json({ message: 'Server Error', error: error.message });
     }
-  }
-);
+  );
 
 
 

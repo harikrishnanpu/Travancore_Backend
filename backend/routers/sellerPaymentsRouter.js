@@ -137,6 +137,7 @@ sellerPaymentsRouter.post(
         method,
         date,
         remark,
+        referenceId: paymentReferenceId,
         submittedBy: userId || 'Unknown', // Adjust according to your authentication setup
       };
 

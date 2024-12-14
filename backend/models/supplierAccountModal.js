@@ -12,6 +12,7 @@ const paymentSchema = new mongoose.Schema({
   date: { type: Date, required: true, default: Date.now },
   method: { type: String, required: true }, // accountId from PaymentsAccount
   submittedBy: { type: String, required: true },
+  referenceId: { type: String},
   remark: { type: String },
 });
 

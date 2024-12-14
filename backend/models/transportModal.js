@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 
 const transportationSchema = new mongoose.Schema(
   {
-    purchaseId: { type: String, required: true },
+    purchaseId: { type: String},
     invoiceNo: { type: String, required: true },
     transportCompanyName: { type: String, required: true },
     transportationCharges: { type: Number, required: true },
