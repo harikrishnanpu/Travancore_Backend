@@ -103,16 +103,107 @@ customerRouter.post(
  * @desc    Delete a customer account by ID
  * @access  Protected (Assuming authentication middleware is applied)
  */
+
 customerRouter.delete('/:id/delete', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const account = await CustomerAccount.findByIdAndDelete(req.params.id);
+    const customerId = req.params.id;
+
+    // 1. Retrieve the Customer Account
+    const account = await CustomerAccount.findById(customerId).session(session);
     if (!account) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ message: 'Customer Account not found' });
     }
-    res.json({ message: 'Customer Account deleted successfully' });
+
+    // 2. Collect all payment referenceIds from the account
+    const paymentReferenceIds = account.payments.map(payment => payment.referenceId);
+
+    // 3. Initialize a Set to track affected invoice numbers for recalculation
+    const affectedInvoiceNosSet = new Set();
+
+    // 4. Remove each payment from PaymentsAccount(s) and Billing documents
+    for (const refId of paymentReferenceIds) {
+      // a. Remove from paymentsIn in PaymentsAccount
+      await PaymentsAccount.updateMany(
+        { 'paymentsIn.referenceId': refId },
+        { $pull: { paymentsIn: { referenceId: refId } } },
+        { session }
+      );
+
+      // b. Remove from paymentsOut in PaymentsAccount (if applicable)
+      await PaymentsAccount.updateMany(
+        { 'paymentsOut.referenceId': refId },
+        { $pull: { paymentsOut: { referenceId: refId } } },
+        { session }
+      );
+
+      // c. Find and update Billing documents that include this payment
+      const billingDocs = await Billing.find({ 'payments.referenceId': refId }).session(session);
+
+      for (const billing of billingDocs) {
+        // Remove the payment from the Billing document
+        await Billing.updateOne(
+          { _id: billing._id },
+          { $pull: { payments: { referenceId: refId } } },
+          { session }
+        );
+
+        // Track the invoice number for recalculating payment status
+        affectedInvoiceNosSet.add(billing.invoiceNo);
+      }
+    }
+
+    // 5. Recalculate payment status for affected Billing documents
+    const affectedInvoiceNos = Array.from(affectedInvoiceNosSet);
+    if (affectedInvoiceNos.length > 0) {
+      const affectedBillings = await Billing.find({ invoiceNo: { $in: affectedInvoiceNos } }).session(session);
+      for (const billing of affectedBillings) {
+        billing.billingAmountReceived = billing.payments.reduce((total, p) => total + (p.amount || 0), 0);
+        const netAmount = billing.grandTotal || 0;
+
+        if (billing.billingAmountReceived >= netAmount) {
+          billing.paymentStatus = "Paid";
+        } else if (billing.billingAmountReceived > 0) {
+          billing.paymentStatus = "Partial";
+        } else {
+          billing.paymentStatus = "Unpaid";
+        }
+
+        await billing.save({ session });
+      }
+    }
+
+    // 6. Delete the Customer Account
+    await CustomerAccount.findByIdAndDelete(customerId).session(session);
+
+    // 7. Update PaymentAccount balances to reflect deletions
+    const paymentAccounts = await PaymentsAccount.find({}).session(session);
+    for (const pa of paymentAccounts) {
+      const totalIn = pa.paymentsIn.reduce((acc, p) => acc + p.amount, 0);
+      const totalOut = pa.paymentsOut.reduce((acc, p) => acc + p.amount, 0);
+      pa.balanceAmount = totalIn - totalOut;
+      await pa.save({ session });
+    }
+
+    // 8. Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(200).json({ message: 'Customer Account and related payments deleted successfully' });
   } catch (error) {
     console.error('Error deleting customer account:', error);
-    res.status(500).json({ message: 'Server Error' });
+
+    // Abort the transaction in case of error
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
+
+    res.status(500).json({ message: 'Server Error', error: error.message });
   }
 });
 

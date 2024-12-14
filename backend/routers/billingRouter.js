@@ -1325,7 +1325,6 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
 
     let lastGeneratedCustomer = null;
 
-    if (billing) {
       lastGeneratedCustomer = await CustomerAccount.aggregate([
         {
           $addFields: {
@@ -1347,7 +1346,6 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
           $limit: 1 // Get the record with the highest numericId
         }
       ]);
-    }
 
     let lastInvoice = 'KK0';
     let lastCustomerId = 'CUS0';
