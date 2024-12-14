@@ -465,7 +465,8 @@ customerRouter.put(
             updatedPayments.push(newPaymentData);
 
             // Add to PaymentsAccount
-            const paymentAccount = await PaymentsAccount.findOne({accountId: sanitizedMethod}, session);
+// Correct way to pass session using method chaining
+const paymentAccount = await PaymentsAccount.findOne({ accountId: sanitizedMethod }).session(session);
             paymentAccount.paymentsIn.push({
               amount: parsedAmount,
               method: sanitizedMethod,
@@ -606,42 +607,81 @@ customerRouter.put(
 
 customerRouter.get('/daily/payments', async (req, res) => {
   try {
-    const { date } = req.query;
+    const { fromDate, toDate } = req.query;
 
-    if (!date) {
-      return res.status(400).json({ message: 'Date is required' });
+    // 1. Validate presence of both dates
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ message: 'Both fromDate and toDate are required.' });
     }
 
-    const selectedDate = new Date(date);
-    if (isNaN(selectedDate)) {
-      return res.status(400).json({ message: 'Invalid date format' });
+    // 2. Convert to Date objects
+    const start = new Date(fromDate);
+    const end = new Date(toDate);
+
+    // 3. Validate date formats
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ message: 'Invalid date format. Use YYYY-MM-DD.' });
     }
 
-    selectedDate.setUTCHours(0, 0, 0, 0);
-    const nextDate = new Date(selectedDate);
-    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    // 4. Ensure fromDate is not after toDate
+    if (start > end) {
+      return res.status(400).json({ message: 'fromDate cannot be after toDate.' });
+    }
 
+    // 5. Adjust end date to include the entire day
+    end.setHours(23, 59, 59, 999);
+
+    // 6. Step 1: Find all invoiceNo's from Billing.payments within the date range
+    const billingPayments = await Billing.aggregate([
+      { $unwind: '$payments' },
+      { 
+        $match: { 
+          'payments.date': { $gte: start, $lte: end }
+        } 
+      },
+      { 
+        $group: { 
+          _id: null, 
+          invoiceNos: { $addToSet: '$payments.invoiceNo' } 
+        } 
+      }
+    ]);
+
+    const billingInvoiceNos = billingPayments.length > 0 ? billingPayments[0].invoiceNos : [];
+
+    // 7. Step 2: Aggregate CustomerAccount.payments within the date range, excluding billingInvoiceNos
     const customers = await CustomerAccount.aggregate([
       { $unwind: '$payments' },
-      {
-        $match: {
-          'payments.date': { $gte: selectedDate, $lt: nextDate },
-        },
+      { 
+        $match: { 
+          'payments.date': { $gte: start, $lte: end },
+          'payments.invoiceNo': { $nin: billingInvoiceNos }
+        } 
       },
-      {
-        $group: {
+      { 
+        $group: { 
           _id: '$customerId',
           customerName: { $first: '$customerName' },
           payments: { $push: '$payments' },
-        },
+        }
       },
+      {
+        $project: {
+          _id: 0,
+          customerId: '$_id',
+          customerName: 1,
+          payments: 1
+        }
+      }
     ]);
 
     res.json(customers);
   } catch (error) {
-    console.error('Error fetching seller payments:', error);
-    res.status(500).json({ message: 'Error fetching seller payments' });
+    console.error('Error fetching customer payments:', error);
+    res.status(500).json({ message: 'Error fetching customer payments' });
   }
 });
+
+
 
 export default customerRouter;
