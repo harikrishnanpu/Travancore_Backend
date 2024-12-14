@@ -548,6 +548,7 @@ transportPaymentsRouter.post('/create', async (req, res) => {
           // Create new Transportation record
           transportation = new Transportation({
             invoiceNo: billing.invoiceNo.trim(),
+            billId: billing.billId.trim(),
             transportCompanyName: transportName.trim(),
             transportationCharges: parseFloat(billing.amount),
             purchaseId: trimmedBillId,
