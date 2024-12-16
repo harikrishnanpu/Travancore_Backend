@@ -690,13 +690,19 @@ userRouter.post("/billing/update-payment", async (req, res) => {
   session.startTransaction();
 
   try {
-    const { invoiceNo, paymentAmount, paymentMethod, userId } = req.body;
+    const { invoiceNo, paymentAmount, paymentMethod, userId, date } = req.body;
 
     // Validate required fields
     if (!invoiceNo || !paymentAmount || !paymentMethod || !userId) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ error: "All fields are required." });
+    }
+
+    // Parse payment date, default to now if invalid
+    let paymentDate = new Date(date);
+    if (isNaN(paymentDate.getTime())) {
+      paymentDate = new Date();
     }
 
     // Find the billing record
@@ -723,13 +729,12 @@ userRouter.post("/billing/update-payment", async (req, res) => {
     }
 
     const referenceId = "PAY" + Date.now().toString();
-    const currentDate = new Date();
 
     // Create payment entries
     const paymentEntry = {
       amount: parsedPaymentAmount,
       method: paymentMethod.trim(),
-      date: currentDate,
+      date: paymentDate,
       referenceId: referenceId,
       invoiceNo: invoiceNo.trim(),
     };
@@ -740,7 +745,7 @@ userRouter.post("/billing/update-payment", async (req, res) => {
       referenceId: referenceId,
       remark: `Bill ${invoiceNo.trim()}`,
       submittedBy: userId,
-      date: currentDate,
+      date: paymentDate,
     };
 
     const customerPaymentEntry = {
@@ -748,7 +753,7 @@ userRouter.post("/billing/update-payment", async (req, res) => {
       method: paymentMethod.trim(),
       remark: `Bill ${invoiceNo.trim()}`,
       submittedBy: userId,
-      date: currentDate,
+      date: paymentDate,
       referenceId: referenceId,
       invoiceNo: invoiceNo.trim(),
     };
@@ -776,7 +781,7 @@ userRouter.post("/billing/update-payment", async (req, res) => {
     // Calculate net amount after discount
     const netAmount = billing.grandTotal || 0;
 
-    // Update the payment status based on the total amount received vs net amount
+    // Update the payment status
     if (billing.billingAmountReceived >= netAmount) {
       billing.paymentStatus = "Paid";
     } else if (billing.billingAmountReceived > 0) {
@@ -795,7 +800,7 @@ userRouter.post("/billing/update-payment", async (req, res) => {
         customerId: billing.customerId.trim(),
         customerName: billing.customerName.trim(),
         customerAddress: billing.customerAddress.trim(),
-        customerContactNumber: billing.customerContactNumber.trim(),
+        customerContactNumber: billing.customerContactNumber?.trim(),
         bills: [],
         payments: [],
       });
@@ -836,6 +841,7 @@ userRouter.post("/billing/update-payment", async (req, res) => {
     res.status(500).json({ error: error.message || "Failed to update payment." });
   }
 });
+
 
 
 

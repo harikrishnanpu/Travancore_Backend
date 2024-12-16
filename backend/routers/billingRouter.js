@@ -1319,7 +1319,7 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
 billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
   try {
     const { id } = req.params;
-    const { fuelCharge = 0, otherExpenses = [], paymentMethod, userId } = req.body;
+    const { otherExpenses = [], paymentMethod, userId } = req.body;
 
     // Find the billing document by ID
     const billing = await Billing.findById(id);
@@ -1327,57 +1327,56 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
       return res.status(404).json({ message: "Billing not found" });
     }
 
-    // Update fuelCharge by adding the new value to the existing one
-    billing.fuelCharge = parseFloat(billing.fuelCharge) + parseFloat(fuelCharge || 0);
-
     // Validate and filter otherExpenses to include only entries with a positive amount
     const validOtherExpenses = Array.isArray(otherExpenses)
-      ? otherExpenses.filter(expense => 
-          typeof expense === "object" && 
-          expense !== null && 
-          typeof expense.amount === "number" && 
+      ? otherExpenses.filter(expense =>
+          typeof expense === "object" &&
+          expense !== null &&
+          typeof expense.amount === "number" &&
           expense.amount > 0
         )
       : [];
 
-    // Append valid otherExpenses to the billing document
-    if (validOtherExpenses.length > 0) {
-      billing.otherExpenses.push(...validOtherExpenses.map(expense => ({
-        amount: parseFloat(expense.amount),
-        remark: expense.remark || ""
-      })));
+    if (validOtherExpenses.length === 0) {
+      return res.status(400).json({ message: "No valid expenses provided." });
     }
-  
+
+    // Append valid otherExpenses to the billing document
+    billing.otherExpenses.push(
+      ...validOtherExpenses.map(expense => ({
+        amount: parseFloat(expense.amount),
+        remark: expense.remark || "",
+        method: paymentMethod,
+        date: new Date(),
+      }))
+    );
+
     try {
       const account = await PaymentsAccount.findOne({ accountId: paymentMethod });
-    
+
       if (!account) {
         console.log(`No account found for accountId: ${paymentMethod}`);
-        return res.status(404).json({ message: 'Payment account not found' });
+        return res.status(404).json({ message: "Payment account not found" });
       }
-    
-      account.paymentsOut.push(...validOtherExpenses.map(expense => ({
+
+      // Generate a unique referenceId for these expenses
+      // You can create a separate referenceId for each expense, or one for all.
+      // Here, we'll generate one for each expense to keep them distinct.
+      const expensePayments = validOtherExpenses.map(expense => ({
         amount: parseFloat(expense.amount),
-        remark: `Other Expense For Bill ${billing.invoiceNo} : ${expense.remark}`,
+        remark: `Other Expense For Bill ${billing.invoiceNo}: ${expense.remark}`,
         method: paymentMethod,
-        submittedBy: userId
-      })));
+        submittedBy: userId,
+        date: new Date(),
+        referenceId: "EXP" + Date.now().toString() + Math.floor(Math.random() * 1000),
+      }));
 
-      const parsedfuelCharge = parseFloat(fuelCharge)
+      account.paymentsOut.push(...expensePayments);
 
-      if(parsedfuelCharge > 0){
-        account.paymentsOut.push({
-          amount: parsedfuelCharge,
-          remark:`${billing.invoiceNo} : Fuel Charge`,
-          method: paymentMethod,
-          submittedBy: userId
-        });
-      }
-    
       await account.save();
     } catch (error) {
-      console.log('Error processing payment:', error);
-      return res.status(500).json({ message: 'Error processing payment', error });
+      console.log("Error processing payment:", error);
+      return res.status(500).json({ message: "Error processing payment", error });
     }
 
     // Save the updated document
@@ -1389,6 +1388,8 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
     res.status(500).json({ message: "Error adding expenses" });
   }
 });
+
+
 
 
 billingRouter.get('/summary/monthly-sales', async (req, res) => {

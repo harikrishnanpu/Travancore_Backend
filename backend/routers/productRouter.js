@@ -1427,7 +1427,7 @@ productRouter.get(
             category: pInfo.category || item.category,
             changeType: 'Purchase',
             invoiceNo: pur.invoiceNo,
-            quantityChange: Math.abs(item.quantity),
+            quantityChange: Math.abs(item.quantityInNumbers),
             finalStock: pInfo.countInStock || 0,
           };
         })
