@@ -5,6 +5,7 @@ import SupplierAccount from '../models/supplierAccountModal.js';
 import mongoose from 'mongoose';
 import SellerPayment from '../models/sellerPayments.js';
 import PaymentsAccount from '../models/paymentsAccountModal.js';
+import expressAsyncHandler from 'express-async-handler';
 
 const supplierRouter = express.Router();
 
@@ -107,7 +108,7 @@ supplierRouter.post('/create', async (req, res) => {
         }
 
         // Create a unique paymentReferenceId
-        const paymentReferenceId = 'PAY' + Date.now().toString() + Math.floor(Math.random() * 1000);
+        const paymentReferenceId = 'PAY' + Date.now().toString();
 
         // Prepare payment entry for SupplierAccount
         const paymentEntry = {
@@ -123,25 +124,25 @@ supplierRouter.post('/create', async (req, res) => {
         savedSupplierAccount.payments.push(paymentEntry);
 
         // Update PaymentsAccount
-        // const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
-        // if (!paymentsAccount) {
-        //   await session.abortTransaction();
-        //   session.endSession();
-        //   return res.status(404).json({ message: `Payment account ${payment.method.trim()} not found.` });
-        // }
+        const paymentsAccount = await PaymentsAccount.findOne({ accountId: payment.method.trim() }).session(session);
+        if (!paymentsAccount) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(404).json({ message: `Payment account ${payment.method.trim()} not found.` });
+        }
 
-        // // Add payment out entry to PaymentsAccount
-        // paymentsAccount.paymentsOut.push({
-        //   amount: parseFloat(payment.amount),
-        //   method: payment.method.trim(),
-        //   remark: `Payment to supplier ${savedSupplierAccount.sellerName}`,
-        //   submittedBy: payment.submittedBy.trim(),
-        //   referenceId: paymentReferenceId,
-        //   date: payment.date ? new Date(payment.date) : new Date(),
-        // });
+        // Add payment out entry to PaymentsAccount
+        paymentsAccount.paymentsOut.push({
+          amount: parseFloat(payment.amount),
+          method: payment.method.trim(),
+          remark: `Payment to supplier ${savedSupplierAccount.sellerName}`,
+          submittedBy: payment.submittedBy.trim(),
+          referenceId: paymentReferenceId,
+          date: payment.date ? new Date(payment.date) : new Date(),
+        });
 
-        // // Save updated PaymentsAccount
-        // await paymentsAccount.save({ session });
+        // Save updated PaymentsAccount
+        await paymentsAccount.save({ session });
 
         // Prepare payment entry for SellerPayment
         const sellerPaymentEntry = {
@@ -192,47 +193,102 @@ supplierRouter.post('/create', async (req, res) => {
  * @desc    Delete a supplier account by ID
  * @access  Protected (Assuming authentication middleware is applied)
  */
-supplierRouter.delete('/:id/delete', async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  try {
-    // Find and delete the SupplierAccount
-    const account = await SupplierAccount.findByIdAndDelete(req.params.id).session(session);
-    if (!account) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ message: 'Supplier Account not found' });
-    }
+supplierRouter.delete(
+  '/:id/delete',
+  expressAsyncHandler(async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    // Delete the associated SellerPayment record
-    const sellerPaymentAccount = await SellerPayment.findOneAndDelete({ sellerId: account.sellerId }).session(session);
-
-    // Remove payments from PaymentsAccount
-    const paymentMethods = account.payments.map((payment) => payment.method.trim());
-    for (const method of paymentMethods) {
-      const paymentsAccount = await PaymentsAccount.findOne({ accountId: method }).session(session);
-      if (paymentsAccount) {
-        // Filter out payments linked to the deleted supplier
-        paymentsAccount.paymentsOut = paymentsAccount.paymentsOut.filter(
-          (payment) => payment.remark !== `Payment to supplier ${account.sellerName}`
-        );
-        await paymentsAccount.save({ session });
+    try {
+      // Handle validation errors
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ errors: errors.array() });
       }
+
+      const { id } = req.params;
+
+      // Find the SupplierAccount document
+      const supplierAccount = await SupplierAccount.findById(id).session(session);
+      if (!supplierAccount) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({ message: 'Supplier Account not found' });
+      }
+
+      const { sellerId, sellerName, payments, bills } = supplierAccount;
+
+      // Delete the SupplierAccount
+      const deletedSupplier = await SupplierAccount.findByIdAndDelete(id).session(session);
+      console.log(`Deleted SupplierAccount with ID: ${id}`);
+
+      // Delete the associated SellerPayment record
+      const deletedSellerPayment = await SellerPayment.findOneAndDelete({ sellerId }).session(session);
+      console.log(`Deleted SellerPayment for sellerId: ${sellerId}`);
+
+      // Remove payments from PaymentsAccount
+      const paymentMethods = payments.map((payment) => payment.method.trim());
+
+      for (const payment of payments) {
+        const { method, referenceId, amount } = payment;
+        const paymentsAccount = await PaymentsAccount.findOne({ accountId: method }).session(session);
+        if (paymentsAccount) {
+          // Find the paymentOut entry by referenceId
+          const paymentOutIndex = paymentsAccount.paymentsOut.findIndex(
+            (po) => po.referenceId === referenceId
+          );
+
+          if (paymentOutIndex !== -1) {
+            // Remove the paymentOut entry
+            paymentsAccount.paymentsOut.splice(paymentOutIndex, 1);
+            // Recalculate totals and balance
+            paymentsAccount.totalAmountOut = (paymentsAccount.totalAmountOut || 0) - amount;
+            paymentsAccount.balance = (paymentsAccount.balance || 0) + amount;
+            await paymentsAccount.save({ session });
+            console.log(`Removed paymentOut with referenceId: ${referenceId} from PaymentsAccount: ${method}`);
+          } else {
+            console.warn(`PaymentOut with referenceId: ${referenceId} not found in PaymentsAccount: ${method}`);
+          }
+        } else {
+          console.warn(`PaymentsAccount with accountId: ${method} not found`);
+        }
+      }
+
+      // Optionally, handle bills associated with the SupplierAccount
+      // For example, if bills are stored in another collection, delete them here
+      // Assuming bills are embedded within SupplierAccount, deleting SupplierAccount removes them
+
+      // Commit the transaction
+      await session.commitTransaction();
+      session.endSession();
+
+      res.status(200).json({ message: 'Supplier Account and associated data deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting supplier account:', error);
+
+      // Abort the transaction on error
+      if (session.inTransaction()) {
+        await session.abortTransaction();
+      }
+      session.endSession();
+
+      // Handle custom errors
+      if (error.status && error.message) {
+        return res.status(error.status).json({ message: error.message });
+      }
+
+      // Handle duplicate key errors (if any)
+      if (error.code === 11000) {
+        const duplicateField = Object.keys(error.keyPattern)[0];
+        return res.status(400).json({ message: `${duplicateField} must be unique.` });
+      }
+
+      res.status(500).json({ message: 'Server Error', error: error.message });
     }
-
-    // Commit the transaction
-    await session.commitTransaction();
-    session.endSession();
-
-    res.json({ message: 'Supplier Account and associated data deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting supplier account:', error);
-    await session.abortTransaction();
-    session.endSession();
-    res.status(500).json({ message: 'Server Error' });
-  }
-});
-
+  })
+);
 
 /**
  * @route   GET /api/suppliers/allaccounts
@@ -455,12 +511,11 @@ supplierRouter.put(
         // Map existing payments by referenceId for easy lookup
         const existingPaymentsMap = new Map(existingPayments.map((p) => [p.referenceId, p]));
 
-        // Prepare to track changes
+        // Categorize incoming payments
         const paymentsToAdd = [];
         const paymentsToUpdate = [];
         const paymentsToRemove = [];
 
-        // Process incoming payments
         for (const payment of payments) {
           const {
             referenceId: incomingRefId,
@@ -481,7 +536,7 @@ supplierRouter.put(
           // Generate a referenceId if not provided
           let referenceId = incomingRefId;
           if (!referenceId) {
-            referenceId = 'PAY' + Date.now().toString();
+            referenceId = 'PAY' + Date.now().toString(); // Alternatively, use UUID for better uniqueness
           }
 
           const existingPayment = existingPaymentsMap.get(referenceId);
@@ -490,17 +545,16 @@ supplierRouter.put(
             // === Updating an Existing Payment ===
             const oldMethod = existingPayment.method;
 
-            // Check if method has changed
-            const isMethodChanged = sanitizedMethod !== oldMethod;
+            // Check if any fields have changed
+            const isChanged =
+              parsedAmount !== existingPayment.amount ||
+              (date && new Date(date).getTime() !== new Date(existingPayment.date).getTime()) ||
+              sanitizedSubmittedBy !== existingPayment.submittedBy ||
+              (remark ? remark.trim() !== existingPayment.remark : existingPayment.remark !== '') ||
+              sanitizedMethod !== existingPayment.method ||
+              sanitizedInvoiceNo !== existingPayment.invoiceNo;
 
-            // Check if other fields have changed
-            const isAmountChanged = parsedAmount !== existingPayment.amount;
-            const isDateChanged = date ? new Date(date).getTime() !== new Date(existingPayment.date).getTime() : false;
-            const isRemarkChanged = remark ? remark.trim() !== existingPayment.remark : existingPayment.remark !== '';
-            const isSubmittedByChanged = sanitizedSubmittedBy !== existingPayment.submittedBy;
-            const isInvoiceNoChanged = sanitizedInvoiceNo !== existingPayment.invoiceNo;
-
-            if (isMethodChanged || isAmountChanged || isDateChanged || isRemarkChanged || isSubmittedByChanged || isInvoiceNoChanged) {
+            if (isChanged) {
               paymentsToUpdate.push({
                 referenceId,
                 amount: parsedAmount,
@@ -588,7 +642,7 @@ supplierRouter.put(
           }
         }
 
-        // Add new payments
+        // Add new payments to SellerPayment
         for (const newPayment of paymentsToAdd) {
           sellerPayment.payments.push({
             amount: newPayment.amount,
@@ -602,14 +656,6 @@ supplierRouter.put(
         }
 
         // === Handle PaymentsAccount Updates ===
-        /**
-         * To ensure data consistency:
-         * - For payments to add: Add to the corresponding PaymentsAccount's paymentsOut
-         * - For payments to update:
-         *    - If method changed: Remove from old PaymentsAccount and add to new PaymentsAccount
-         *    - If only amount or other fields changed: Update in the existing PaymentsAccount's paymentsOut
-         * - For payments to remove: Remove from the corresponding PaymentsAccount's paymentsOut
-         */
 
         // Process removals
         for (const payment of paymentsToRemove) {
@@ -684,15 +730,11 @@ supplierRouter.put(
               throw { status: 404, message: `PaymentsAccount with accountId ${method} not found.` };
             }
           }
-
-          // === Optional: Handle InvoiceNo Changes in Billing Documents ===
-          // Since the user requested to remove billing modal updation, this section is omitted.
-          // If needed, similar logic can be implemented here.
         }
 
         // Process additions
         for (const newPayment of paymentsToAdd) {
-          const { referenceId, method, amount, date, submittedBy, remark, invoiceNo } = newPayment;
+          const { referenceId, method, amount, date, submittedBy, remark } = newPayment;
 
           // Add to PaymentsAccount
           const paymentsAccount = await PaymentsAccount.findOne({ accountId: method }).session(session);
@@ -710,12 +752,6 @@ supplierRouter.put(
           });
 
           await paymentsAccount.save({ session });
-        }
-
-        // Remove any payments that are no longer in the updated list
-        for (const payment of paymentsToRemove) {
-          // Since billing modal updation is removed, we do not handle Billing documents here
-          // If needed, additional logic can be added
         }
 
         // === Recalculate Totals ===
@@ -757,31 +793,72 @@ supplierRouter.put(
         session.endSession();
 
         res.status(200).json({ message: 'Supplier account updated successfully.', account: supplierAccount });
-      } 
-    }catch (error) {
-        console.error('Error updating supplier account:', error);
+      } else {
+        // If payments are not provided, proceed to save other updates
+        // Recalculate totals
+        supplierAccount.totalBillAmount = supplierAccount.bills.reduce(
+          (acc, bill) => acc + (bill.billAmount || 0),
+          0
+        );
+        supplierAccount.paidAmount = supplierAccount.payments.reduce(
+          (acc, payment) => acc + (payment.amount || 0),
+          0
+        );
+        supplierAccount.pendingAmount = supplierAccount.totalBillAmount - supplierAccount.paidAmount;
 
-        // Abort the transaction on error
-        if (session.inTransaction()) {
-          await session.abortTransaction();
+        if (supplierAccount.pendingAmount < 0) {
+          throw { status: 400, message: 'Paid amount exceeds total bill amount' };
         }
+
+        // === Update PaymentAccounts balances ===
+        const paymentAccounts = await PaymentsAccount.find({}).session(session);
+        for (const pa of paymentAccounts) {
+          const totalIn = pa.paymentsIn.reduce(
+            (acc, payment) => acc + (payment.amount || 0),
+            0
+          );
+          const totalOut = pa.paymentsOut.reduce(
+            (acc, payment) => acc + (payment.amount || 0),
+            0
+          );
+          pa.balanceAmount = totalIn - totalOut;
+          await pa.save({ session });
+        }
+
+        // === Save Updated Documents ===
+        await supplierAccount.save({ session });
+        await sellerPayment.save({ session });
+
+        // === Commit Transaction ===
+        await session.commitTransaction();
         session.endSession();
 
-        // Handle custom errors
-        if (error.status && error.message) {
-          return res.status(error.status).json({ message: error.message });
-        }
-
-        // Handle duplicate key errors (e.g., duplicate supplierId)
-        if (error.code === 11000) {
-          const duplicateField = Object.keys(error.keyPattern)[0];
-          return res.status(400).json({ message: `${duplicateField} must be unique.` });
-        }
-
-        res.status(500).json({ message: 'Server Error', error: error.message });
+        res.status(200).json({ message: 'Supplier account updated successfully.', account: supplierAccount });
       }
+    } catch (error) {
+      console.error('Error updating supplier account:', error);
+
+      // Abort the transaction on error
+      if (session.inTransaction()) {
+        await session.abortTransaction();
+      }
+      session.endSession();
+
+      // Handle custom errors
+      if (error.status && error.message) {
+        return res.status(error.status).json({ message: error.message });
+      }
+
+      // Handle duplicate key errors (e.g., duplicate supplierId)
+      if (error.code === 11000) {
+        const duplicateField = Object.keys(error.keyPattern)[0];
+        return res.status(400).json({ message: `${duplicateField} must be unique.` });
+      }
+
+      res.status(500).json({ message: 'Server Error', error: error.message });
     }
-  );
+  }
+);
 
 
 

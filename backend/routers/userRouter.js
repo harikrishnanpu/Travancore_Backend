@@ -345,15 +345,17 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
   try {
     const { userId, driverName, invoiceNo, startLocation, deliveryId } = req.body;
 
-    // Ensure all required fields are present
+    // Validate required fields
     if (!userId || !driverName || !invoiceNo || !startLocation || !deliveryId) {
-      return res.status(400).json({ error: "All fields are required." });
+      return res.status(400).json({
+        error: "Fields 'userId', 'driverName', 'invoiceNo', 'startLocation', and 'deliveryId' are required."
+      });
     }
 
     // Find the Billing document by invoiceNo
     const billing = await Billing.findOne({ invoiceNo });
     if (!billing) {
-      return res.status(404).json({ error: "Billing not found." });
+      return res.status(404).json({ error: `Billing with invoiceNo '${invoiceNo}' not found.` });
     }
 
     // Check if the deliveryId already exists in billing.deliveries
@@ -376,15 +378,20 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
         otherExpenses: [],
       };
       billing.deliveries.push(delivery);
+
+      // Ensure deliveryId is tracked in billing.deliveryIds
+      if (!billing.deliveryIds.includes(deliveryId)) {
+        billing.deliveryIds.push(deliveryId);
+      }
     } else {
-      // Update existing delivery entry with new start location
+      // Update existing delivery entry with a new start location
       delivery.startLocations.push({ coordinates: startLocation, timestamp: new Date() });
       delivery.deliveryStatus = "Transit-In";
     }
 
     await billing.save();
 
-    // Find or create a Location document for this delivery attempt
+    // Find or create a Location document for this delivery
     let location = await Location.findOne({ deliveryId });
 
     if (!location) {
@@ -398,7 +405,7 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
         endLocations: [],
       });
     } else {
-      // Add the new start location to the existing document
+      // Add the new start location to the existing location document
       location.startLocations.push({ coordinates: startLocation, timestamp: new Date() });
     }
 
@@ -414,6 +421,7 @@ userRouter.post("/billing/start-delivery", async (req, res) => {
     res.status(500).json({ error: "Failed to save start location and update delivery status." });
   }
 });
+
 
 // End Delivery Endpoint
 userRouter.post("/billing/end-delivery", async (req, res) => {
@@ -434,41 +442,49 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
       method // Payment method for expenses
     } = req.body;
 
-    // Validate required fields
+    // 1. Validate required fields
     if (!userId || !invoiceNo || !endLocation || !deliveryId) {
-      throw new Error("userId, invoiceNo, endLocation, and deliveryId are required.");
+      throw new Error("Fields 'userId', 'invoiceNo', 'endLocation', and 'deliveryId' are required.");
     }
 
-    if (!Array.isArray(deliveredProducts) || deliveredProducts.length === 0) {
-      throw new Error("deliveredProducts must be a non-empty array.");
+    // Check if any otherExpenses have amount > 0 and require a method
+    if (otherExpenses.some(exp => exp.amount > 0) && (!method || !method.trim())) {
+      throw new Error("You must provide a 'method' if 'otherExpenses' with amount are provided.");
     }
 
-    // Find the Billing document by invoiceNo
+    // 2. Find the Billing document by invoiceNo
     const billing = await Billing.findOne({ invoiceNo }).session(session);
     if (!billing) {
-      throw new Error("Billing not found.");
+      throw new Error(`Billing with invoiceNo '${invoiceNo}' not found.`);
     }
 
-    // Find the corresponding delivery entry
-    const delivery = billing.deliveries.find(d => d.deliveryId === deliveryId);
+    // 3. Find the corresponding delivery entry
+    const delivery = billing.deliveries.find((d) => d.deliveryId === deliveryId);
     if (!delivery) {
-      throw new Error("Delivery not found for this deliveryId.");
+      throw new Error(`Delivery with deliveryId '${deliveryId}' not found in billing.`);
     }
 
-    // Update delivered products (incremental logic)
+    // 4. Update delivered products
     for (const dp of deliveredProducts) {
-      const product = billing.products.find((p) => p.item_id === dp.item_id);
+      const { item_id, deliveredQuantity } = dp;
+
+      if (!item_id || deliveredQuantity == null) {
+        throw new Error("Each delivered product must have 'item_id' and 'deliveredQuantity'.");
+      }
+
+      const product = billing.products.find((p) => p.item_id === item_id);
       if (!product) {
-        throw new Error(`Product with item_id ${dp.item_id} not found in billing.`);
+        throw new Error(`Product with item_id '${item_id}' not found in billing products.`);
       }
 
       const previousDeliveredQuantity = product.deliveredQuantity || 0;
-      const totalDeliveredQuantity = previousDeliveredQuantity + dp.deliveredQuantity;
+      const totalDeliveredQuantity = previousDeliveredQuantity + deliveredQuantity;
 
       if (totalDeliveredQuantity > product.quantity) {
-        throw new Error(`Delivered quantity for item ${dp.item_id} exceeds ordered amount.`);
+        throw new Error(`Delivered quantity for item '${item_id}' exceeds the ordered amount.`);
       }
 
+      // Update product's delivered quantity and status
       product.deliveredQuantity = totalDeliveredQuantity;
       if (totalDeliveredQuantity === product.quantity) {
         product.deliveryStatus = "Delivered";
@@ -478,156 +494,125 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
         product.deliveryStatus = "Pending";
       }
 
-      const deliveredProduct = delivery.productsDelivered.find(p => p.item_id === dp.item_id);
+      // Update delivery's productsDelivered
+      const deliveredProduct = delivery.productsDelivered.find((p) => p.item_id === item_id);
       if (deliveredProduct) {
-        deliveredProduct.deliveredQuantity += dp.deliveredQuantity;
+        deliveredProduct.deliveredQuantity += deliveredQuantity;
       } else {
         delivery.productsDelivered.push({
-          item_id: dp.item_id,
-          deliveredQuantity: dp.deliveredQuantity,
+          item_id,
+          deliveredQuantity,
+          psRatio: product.psRatio
         });
       }
     }
 
-    // Recalculate overall delivery status
-    await billing.updateDeliveryStatus();
+    // 5. Update numeric fields for this delivery
+    const parsedKmTravelled = parseFloat(kmTravelled);
+    const parsedStartingKm = parseFloat(startingKm);
+    const parsedEndKm = parseFloat(endKm);
+    const parsedFuelCharge = parseFloat(fuelCharge);
 
-    // Update numeric fields
-    if (!isNaN(parseFloat(kmTravelled))) {
-      delivery.kmTravelled += parseFloat(kmTravelled);
-    }
-    if (!isNaN(parseFloat(startingKm))) {
-      delivery.startingKm = parseFloat(startingKm);
-    }
-    if (!isNaN(parseFloat(endKm))) {
-      delivery.endKm = parseFloat(endKm);
-    }
-    if (!isNaN(parseFloat(fuelCharge))) {
-      delivery.fuelCharge += parseFloat(fuelCharge);
-      billing.fuelCharge = delivery.fuelCharge;
+    if (!isNaN(parsedKmTravelled)) {
+      delivery.kmTravelled = (delivery.kmTravelled || 0) + parsedKmTravelled;
     }
 
-    // Handle Other Expenses (Full CRUD):
-    // Existing expenses in this delivery
-    const existingExpenseIds = delivery.otherExpenses.map(e => e._id.toString());
-
-    // Expenses from request (otherExpenses) - if _id not present, they're new.
-    const updatedExpenseIds = otherExpenses.filter(exp => exp.id).map(exp => exp.id.toString());
-
-    // Determine which expenses to remove (those in existing but not in updated)
-    const expensesToRemoveIds = existingExpenseIds.filter(id => !updatedExpenseIds.includes(id));
-
-    // Remove those expenses from delivery and billing
-    if (expensesToRemoveIds.length > 0) {
-      delivery.otherExpenses = delivery.otherExpenses.filter(e => !expensesToRemoveIds.includes(e._id.toString()));
-      billing.otherExpenses = billing.otherExpenses.filter(e => !expensesToRemoveIds.includes(e._id.toString()));
+    if (!isNaN(parsedStartingKm)) {
+      delivery.startingKm = parsedStartingKm;
     }
 
-    // Add or update expenses
+    if (!isNaN(parsedEndKm)) {
+      delivery.endKm = parsedEndKm;
+    }
+
+    if (!isNaN(parsedFuelCharge)) {
+      delivery.fuelCharge = (delivery.fuelCharge || 0) + parsedFuelCharge;
+    }
+
+    // 6. Handle Other Expenses for this delivery only
+    //    Only update or add expenses; do not remove existing expenses not mentioned
+    const existingExpensesMap = new Map(delivery.otherExpenses.map(e => [e._id.toString(), e]));
+
     for (const expense of otherExpenses) {
-      const amt = parseFloat(expense.amount);
-      if (isNaN(amt) || amt < 0) {
+      const { id, amount, remark } = expense;
+      const parsedAmount = parseFloat(amount);
+
+      if (isNaN(parsedAmount) || parsedAmount < 0) {
         throw new Error("Expense amount must be a non-negative number.");
       }
 
-      if (expense.id) {
-        // Update existing expense
-        const existingExpense = delivery.otherExpenses.find(e => e._id.toString() === expense.id.toString());
+      if (id) {
+        // Update existing expense in the delivery
+        const existingExpense = delivery.otherExpenses.find((e) => e._id.toString() === id.toString());
         if (!existingExpense) {
-          throw new Error(`Expense with id ${expense.id} not found in this delivery.`);
+          throw new Error(`Expense with id '${id}' not found in this delivery.`);
         }
-        existingExpense.amount = amt;
-        existingExpense.remark = expense.remark || existingExpense.remark;
+        existingExpense.amount = parsedAmount;
+        existingExpense.remark = remark || existingExpense.remark;
         if (method && method.trim()) {
           existingExpense.method = method.trim();
         }
-
-        // Also update in billing.otherExpenses
-        const billingExpense = billing.otherExpenses.find(e => e._id.toString() === expense.id.toString());
-        if (billingExpense) {
-          billingExpense.amount = amt;
-          billingExpense.remark = expense.remark || billingExpense.remark;
-          if (method && method.trim()) {
-            billingExpense.method = method.trim();
-          }
-        }
-
       } else {
-        // Add new expense
+        // Add new expense to the delivery
         const newExpenseId = new mongoose.Types.ObjectId();
         const newExpense = {
           _id: newExpenseId,
-          amount: amt,
-          remark: expense.remark || "",
+          amount: parsedAmount,
+          remark: remark || "",
           date: new Date(),
           method: method && method.trim() ? method.trim() : undefined,
         };
         delivery.otherExpenses.push(newExpense);
-        billing.otherExpenses.push(newExpense);
+        existingExpensesMap.set(newExpenseId.toString(), newExpense);
       }
     }
 
-    // Determine final delivery status based on products
-    const allDelivered = billing.products.every((product) => product.deliveryStatus === "Delivered");
-    const anyDelivered = billing.products.some(
-      (product) => product.deliveryStatus === "Delivered" || product.deliveryStatus === "Partially Delivered"
-    );
+    // 7. Update billing-level deliveryStatus based on all products
+    await billing.updateDeliveryStatus();
 
-    if (allDelivered) {
+    // Now determine this particular delivery's status based on products delivered in this delivery
+    const allDeliveredInThisDelivery = delivery.productsDelivered.length > 0 &&
+      delivery.productsDelivered.every((dpd) => {
+        const prod = billing.products.find((p) => p.item_id === dpd.item_id);
+        return prod && prod.deliveredQuantity === prod.quantity;
+      });
+
+    const anyDeliveredInThisDelivery = delivery.productsDelivered.some((dpd) => {
+      const prod = billing.products.find((p) => p.item_id === dpd.item_id);
+      return prod && prod.deliveredQuantity > 0 && prod.deliveredQuantity < prod.quantity;
+    });
+
+    if (allDeliveredInThisDelivery) {
       delivery.deliveryStatus = "Delivered";
-      billing.deliveryStatus = "Delivered";
-    } else if (anyDelivered) {
+    } else if (anyDeliveredInThisDelivery) {
       delivery.deliveryStatus = "Partially Delivered";
-      billing.deliveryStatus = "Partially Delivered";
     } else {
       delivery.deliveryStatus = "Pending";
-      billing.deliveryStatus = "Pending";
     }
 
-    // If method is provided, update PaymentsAccount
+    // 8. If method is provided, update PaymentsAccount for otherExpenses of this delivery
+    //     Only update or add paymentsOut entries related to this delivery's otherExpenses
     if (method && method.trim()) {
       const expenseMethod = method.trim();
       const account = await PaymentsAccount.findOne({ accountId: expenseMethod }).session(session);
       if (!account) {
-        throw new Error("Payment account not found.");
+        throw new Error(`Payment account with accountId '${expenseMethod}' not found.`);
       }
 
-      // Handle Fuel Charge
-      const fuelRefId = `FUEL-${deliveryId}`;
-      account.paymentsOut = account.paymentsOut.filter((pay) => pay.referenceId !== fuelRefId);
-      if (delivery.fuelCharge > 0) {
-        account.paymentsOut.push({
-          amount: delivery.fuelCharge,
-          method: expenseMethod,
-          referenceId: fuelRefId,
-          remark: `Fuel charge for delivery ${deliveryId}`,
-          submittedBy: delivery.userId || userId,
-          date: new Date(),
-        });
-      }
-
-      // Handle Other Expenses
-      const currentExpenseRefs = delivery.otherExpenses.map(e => `EXP-${e._id}`);
-      // Remove old expense payments not matching current expenses
-      account.paymentsOut = account.paymentsOut.filter(pay => {
-        if (pay.referenceId.startsWith("EXP-")) {
-          return currentExpenseRefs.includes(pay.referenceId);
-        }
-        return true;
-      });
-
-      // Add/update current expenses
       for (const exp of delivery.otherExpenses) {
         if (exp.amount > 0) {
           const expenseRefId = `EXP-${exp._id}`;
-          const existingPaymentIndex = account.paymentsOut.findIndex(pay => pay.referenceId === expenseRefId);
-          if (existingPaymentIndex >= 0) {
+
+          // Find existing paymentOut for this expense
+          const existingPayment = account.paymentsOut.find(pay => pay.referenceId === expenseRefId);
+
+          if (existingPayment) {
             // Update existing paymentOut
-            account.paymentsOut[existingPaymentIndex].amount = exp.amount;
-            account.paymentsOut[existingPaymentIndex].method = expenseMethod;
-            account.paymentsOut[existingPaymentIndex].remark = `Expense (${exp.remark}) for delivery ${deliveryId}`;
-            account.paymentsOut[existingPaymentIndex].submittedBy = delivery.userId || userId;
-            account.paymentsOut[existingPaymentIndex].date = new Date();
+            existingPayment.amount = exp.amount;
+            existingPayment.method = expenseMethod;
+            existingPayment.remark = `Expense (${exp.remark}) for delivery ${deliveryId}`;
+            existingPayment.submittedBy = userId || "system";
+            existingPayment.date = new Date();
           } else {
             // Add new paymentOut
             account.paymentsOut.push({
@@ -635,47 +620,62 @@ userRouter.post("/billing/end-delivery", async (req, res) => {
               method: expenseMethod,
               referenceId: expenseRefId,
               remark: `Expense (${exp.remark}) for delivery ${deliveryId}`,
-              submittedBy: delivery.userId || userId,
+              submittedBy: userId || "system",
               date: new Date(),
             });
           }
         }
       }
 
+      // Save the updated PaymentsAccount
       await account.save({ session });
     }
 
-    // Save Billing
+    // 9. Recalculate totals for billing (totalFuelCharge, totalOtherExpenses)
+    billing.calculateTotals();
+
+    // 10. Save Billing after all updates
     await billing.save({ session });
 
-    // Update Location with end location
-    const location = await Location.findOne({ deliveryId }).session(session);
-    if (!location) {
-      await session.commitTransaction();
-      session.endSession();
-      return res.status(404).json({ error: "Location not found for this deliveryId." });
+    // 11. Update Location with end location (if provided)
+    if (endLocation) {
+      // Assuming Location model has a reference to deliveryId
+      const location = await Location.findOne({ deliveryId }).session(session);
+      if (location) {
+        location.endLocations.push({
+          coordinates: endLocation,
+          timestamp: new Date(),
+        });
+
+        await location.save({ session });
+      } else {
+        // Optionally, handle the case where location is not found
+        throw new Error(`Location with deliveryId '${deliveryId}' not found.`);
+      }
     }
 
-    location.endLocations.push({
-      coordinates: endLocation,
-      timestamp: new Date(),
-    });
-
-    await location.save({ session });
-
+    // 12. Commit the transaction and end the session
     await session.commitTransaction();
     session.endSession();
 
+    // 13. Respond with success
     res.status(200).json({ message: "Delivery completed and statuses updated.", delivery });
   } catch (error) {
     console.error("Error processing end-delivery request:", error);
+    // Abort the transaction if an error occurred
     if (session.inTransaction()) {
       await session.abortTransaction();
     }
+    // End the session
     session.endSession();
+    // Respond with error
     res.status(500).json({ error: error.message || "Failed to complete delivery and update statuses." });
   }
 });
+
+
+
+
 
 
 

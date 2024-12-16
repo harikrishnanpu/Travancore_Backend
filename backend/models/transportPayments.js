@@ -7,7 +7,7 @@ const transportPaymentSchema = new mongoose.Schema({
   method: { type: String, required: true }, // e.g., "credit card", "cash", etc.
   submittedBy: { type: String, required: true },
   date: { type: Date, default: Date.now },
-  referenceId: { type: String },
+  referenceId: { type: String, required: true },
   remark: { type: String },
 });
 

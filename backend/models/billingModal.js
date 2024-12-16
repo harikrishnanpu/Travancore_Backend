@@ -8,7 +8,7 @@ const BillingSchema = new mongoose.Schema(
     approvedBy: { type: String },
     submittedBy: { type: String },
     invoiceDate: { type: Date, required: true },
-    showroom: {type: String, required: true},
+    showroom: { type: String, required: true },
     salesmanName: { type: String, required: true },
     salesmanPhoneNumber: { type: String },
     expectedDeliveryDate: { type: Date, required: true },
@@ -22,24 +22,26 @@ const BillingSchema = new mongoose.Schema(
     customerName: { type: String, required: true },
     customerAddress: { type: String, required: true },
     customerContactNumber: { type: String },
-    kmTravelled: { type: Number, default: 0 },
-    startingKm: { type: Number, default: 0 },
-    endKm: { type: Number, default: 0 },
-    fuelCharge: { type: Number, default: 0 },
+
+    // Removed kmTravelled, startingKm, endKm, fuelCharge fields from the main level
+
     marketedBy: { type: String },
     unloading: { type: Number, default: 0 },
     transportation: { type: Number, default: 0 },
     handlingCharge: { type: Number, default: 0 },
     remark: { type: String, default: "" },
+
+    // "otherExpenses" at the billing level
     otherExpenses: [
       {
         _id: { type: mongoose.Schema.Types.ObjectId, default: () => new mongoose.Types.ObjectId() },
         amount: { type: Number },
         remark: { type: String },
         date: { type: Date, default: Date.now },
-        method: { type: String}
+        method: { type: String }
       },
     ],
+
     products: [
       {
         item_id: { type: String, required: true },
@@ -55,10 +57,11 @@ const BillingSchema = new mongoose.Schema(
         size: { type: String, required: true },
         psRatio: { type: String, required: true },
         sellingPriceinQty: { type: Number, required: true },
-        deliveredQuantity: { type: Number, default: 0 }, // New field
+        deliveredQuantity: { type: Number, default: 0 },
         deliveryStatus: { type: String, default: "Pending" },
       },
     ],
+
     payments: [
       {
         amount: { type: Number, required: true },
@@ -69,7 +72,9 @@ const BillingSchema = new mongoose.Schema(
         invoiceNo: { type: String, required: true },
       },
     ],
-    deliveryIds: [String], // Keep track of all delivery IDs related to this billing
+
+    deliveryIds: [String],
+
     deliveries: [
       {
         deliveryId: { type: String, required: true },
@@ -98,7 +103,7 @@ const BillingSchema = new mongoose.Schema(
         kmTravelled: Number,
         startingKm: Number,
         endKm: Number,
-        fuelCharge: Number,
+        fuelCharge: Number, // Fuel charge specific to this delivery
         method: String,
         otherExpenses: [
           {
@@ -106,12 +111,17 @@ const BillingSchema = new mongoose.Schema(
             amount: Number,
             remark: String,
             method: String,
-            date: { type: Date, default: Date.now }, // Added date field
+            date: { type: Date, default: Date.now },
           },
         ],
       },
     ],
+
     notes: { type: String },
+
+    // Newly added fields for totals
+    totalFuelCharge: { type: Number, default: 0 },
+    totalOtherExpenses: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
@@ -150,25 +160,48 @@ BillingSchema.methods.addPayment = async function (payment) {
 BillingSchema.statics.getTotalQuantitySold = async function (itemId) {
   try {
     const result = await this.aggregate([
-      { $unwind: "$products" }, // Unwind the products array to access each product individually
-      { $match: { "products.item_id": itemId.trim() } }, // Match the specific item by item_id
+      { $unwind: "$products" },
+      { $match: { "products.item_id": itemId.trim() } },
       {
         $group: {
           _id: "$products.item_id",
-          totalQuantity: { $sum: "$products.quantity" }, // Sum the quantity of the product sold
+          totalQuantity: { $sum: "$products.quantity" },
         },
       },
     ]);
 
-    // If no results found, return 0
     return result.length > 0 ? result[0].totalQuantity : 0;
   } catch (error) {
     console.error("Error in getTotalQuantitySold:", error);
-    return 0; // Return 0 in case of any error
+    return 0;
   }
 };
 
-// Pre-save hook to update billingAmountReceived and payment status
+// Method to recalculate totalFuelCharge and totalOtherExpenses
+BillingSchema.methods.calculateTotals = function () {
+  // Sum top-level other expenses
+  const topLevelOtherExpenses = this.otherExpenses.reduce((acc, expense) => acc + (expense.amount || 0), 0);
+
+  // Sum deliveries' fuel charges and other expenses
+  let deliveryFuelTotal = 0;
+  let deliveryOtherExpenseTotal = 0;
+
+  for (const delivery of this.deliveries) {
+    if (delivery.fuelCharge) {
+      deliveryFuelTotal += delivery.fuelCharge;
+    }
+
+    if (delivery.otherExpenses && delivery.otherExpenses.length > 0) {
+      deliveryOtherExpenseTotal += delivery.otherExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+    }
+  }
+
+  // Update totals
+  this.totalFuelCharge = deliveryFuelTotal;
+  this.totalOtherExpenses = topLevelOtherExpenses + deliveryOtherExpenseTotal;
+};
+
+// Pre-save hook to update billingAmountReceived, payment status, and totals
 BillingSchema.pre("save", function (next) {
   // Calculate total received from payments
   this.billingAmountReceived = this.payments.reduce(
@@ -188,12 +221,14 @@ BillingSchema.pre("save", function (next) {
     this.paymentStatus = "Unpaid";
   }
 
+  // Recalculate totals for fuel charge and other expenses
+  this.calculateTotals();
+
   next();
 });
 
 // Method to update delivery status based on product delivery quantities
 BillingSchema.methods.updateDeliveryStatus = function () {
-  // Determine overall delivery status based on product delivery statuses
   const allDelivered = this.products.every(
     (product) => product.deliveryStatus === "Delivered"
   );

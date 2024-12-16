@@ -231,13 +231,15 @@ transportPaymentsRouter.get('/name/:name', async (req, res) => {
 
 
 // PUT /:id/update// PUT /:id/update
+// Helper function to generate unique referenceId
+
 transportPaymentsRouter.put('/:id/update', async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const transportPaymentId = req.params.id;
-    const {
+    let {
       transportName,
       transportType,
       transportGst,
@@ -254,34 +256,44 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
       return res.status(404).json({ message: 'Transport payment not found.' });
     }
 
-    // 2. Store old payments for comparison (keyed by billId)
+    // 2. Store old payments for comparison (keyed by referenceId)
     const oldPaymentsMap = new Map(
-      existingTransportPayment.payments.map((payment) => [payment.billId, payment])
+      existingTransportPayment.payments.map((payment) => [payment.referenceId, payment])
     );
 
-    // 3. Update TransportPayment fields
+    // 3. Map billId to referenceId in incoming payments
+    if (payments !== undefined) {
+      payments = payments.map(payment => ({
+        ...payment,
+        referenceId: payment.billId, // Ensure referenceId is set
+        // Optionally, remove billId if it's not needed in the TransportPayment schema
+        // billId: undefined,
+      }));
+    }
+
+    // 4. Update TransportPayment fields
     if (transportName !== undefined) existingTransportPayment.transportName = transportName;
     if (transportType !== undefined) existingTransportPayment.transportType = transportType;
     if (transportGst !== undefined) existingTransportPayment.transportGst = transportGst;
     if (billings !== undefined) existingTransportPayment.billings = billings;
     if (payments !== undefined) existingTransportPayment.payments = payments;
 
-    // 4. Save the updated TransportPayment (triggers pre-save middleware)
+    // 5. Save the updated TransportPayment (triggers pre-save middleware)
     const updatedTransportPayment = await existingTransportPayment.save({ session });
 
-    // 5. Prepare new payments map (keyed by billId)
+    // 6. Prepare new payments map (keyed by referenceId)
     const newPaymentsMap = new Map(
-      updatedTransportPayment.payments.map((payment) => [payment.billId, payment])
+      updatedTransportPayment.payments.map((payment) => [payment.referenceId, payment])
     );
 
-    // 6. Identify payments to add, update, or remove
+    // 7. Identify payments to add, update, or remove
     const paymentsToAdd = [];
     const paymentsToUpdate = [];
     const paymentsToRemove = [];
 
     // Determine added and updated payments
-    for (const [billId, newPayment] of newPaymentsMap.entries()) {
-      const oldPayment = oldPaymentsMap.get(billId);
+    for (const [referenceId, newPayment] of newPaymentsMap.entries()) {
+      const oldPayment = oldPaymentsMap.get(referenceId);
       if (!oldPayment) {
         // New payment
         paymentsToAdd.push(newPayment);
@@ -301,8 +313,8 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
     }
 
     // Determine removed payments
-    for (const [billId, oldPayment] of oldPaymentsMap.entries()) {
-      if (!newPaymentsMap.has(billId)) {
+    for (const [referenceId, oldPayment] of oldPaymentsMap.entries()) {
+      if (!newPaymentsMap.has(referenceId)) {
         paymentsToRemove.push(oldPayment);
       }
     }
@@ -316,20 +328,20 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
       return account;
     };
 
-    // 7. Handle Added Payments
+    // 8. Handle Added Payments
     for (const payment of paymentsToAdd) {
-      const { method: accountId, billId, amount, method, remark, submittedBy, date } = payment;
+      const { method: accountId, referenceId, amount, method, remark, submittedBy, date } = payment;
 
       // Find the PaymentsAccount
       const paymentsAccount = await findPaymentsAccountById(accountId);
 
       // Check if the payment already exists to prevent duplicates
       const existingPayment = paymentsAccount.paymentsOut.find(
-        (pa) => pa.referenceId === billId
+        (pa) => pa.referenceId === referenceId
       );
       if (existingPayment) {
         throw new Error(
-          `Payment with billId ${billId} already exists in PaymentsAccount ${accountId}.`
+          `Payment with referenceId ${referenceId} already exists in PaymentsAccount ${accountId}.`
         );
       }
 
@@ -338,7 +350,7 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
         amount,
         method,
         remark,
-        referenceId: billId,
+        referenceId,
         submittedBy,
         date,
       });
@@ -346,15 +358,12 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
       await paymentsAccount.save({ session });
     }
 
-    // 8. Handle Updated Payments
+    // 9. Handle Updated Payments
     for (const { oldPayment, newPayment } of paymentsToUpdate) {
-      const {
-        billId: oldBillId,
-        method: oldAccountId,
-      } = oldPayment;
+      const { referenceId: oldReferenceId, method: oldAccountId } = oldPayment;
 
       const {
-        billId: newBillId,
+        referenceId: newReferenceId,
         method: newAccountId,
         amount: newAmount,
         method: newMethod,
@@ -369,12 +378,12 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
         // Remove from old PaymentsAccount
         const oldAccount = await findPaymentsAccountById(oldAccountId);
         const paymentIndexOld = oldAccount.paymentsOut.findIndex(
-          (pa) => pa.referenceId === oldBillId
+          (pa) => pa.referenceId === oldReferenceId
         );
 
         if (paymentIndexOld === -1) {
           throw new Error(
-            `Payment with billId ${oldBillId} not found in PaymentsAccount ${oldAccountId}.`
+            `Payment with referenceId ${oldReferenceId} not found in PaymentsAccount ${oldAccountId}.`
           );
         }
 
@@ -386,11 +395,11 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
 
         // Check if the payment already exists in the new account to prevent duplicates
         const existingPayment = newAccount.paymentsOut.find(
-          (pa) => pa.referenceId === newBillId
+          (pa) => pa.referenceId === newReferenceId
         );
         if (existingPayment) {
           throw new Error(
-            `Payment with billId ${newBillId} already exists in PaymentsAccount ${newAccountId}.`
+            `Payment with referenceId ${newReferenceId} already exists in PaymentsAccount ${newAccountId}.`
           );
         }
 
@@ -398,7 +407,7 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
           amount: newAmount,
           method: newMethod,
           remark: newRemark,
-          referenceId: newBillId,
+          referenceId: newReferenceId,
           submittedBy: newSubmittedBy,
           date: newDate,
         });
@@ -408,12 +417,12 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
         const account = await findPaymentsAccountById(newAccountId);
 
         const paymentIndex = account.paymentsOut.findIndex(
-          (pa) => pa.referenceId === newBillId
+          (pa) => pa.referenceId === newReferenceId
         );
 
         if (paymentIndex === -1) {
           throw new Error(
-            `Payment with billId ${newBillId} not found in PaymentsAccount ${newAccountId}.`
+            `Payment with referenceId ${newReferenceId} not found in PaymentsAccount ${newAccountId}.`
           );
         }
 
@@ -428,21 +437,21 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
       }
     }
 
-    // 9. Handle Removed Payments
+    // 10. Handle Removed Payments
     for (const oldPayment of paymentsToRemove) {
-      const { billId, method: accountId } = oldPayment;
+      const { referenceId, method: accountId } = oldPayment;
 
       // Find the PaymentsAccount
       const paymentsAccount = await findPaymentsAccountById(accountId);
 
       // Remove the payment from paymentsOut
       const paymentIndex = paymentsAccount.paymentsOut.findIndex(
-        (pa) => pa.referenceId === billId
+        (pa) => pa.referenceId === referenceId
       );
 
       if (paymentIndex === -1) {
         throw new Error(
-          `Payment with billId ${billId} not found in PaymentsAccount ${accountId}.`
+          `Payment with referenceId ${referenceId} not found in PaymentsAccount ${accountId}.`
         );
       }
 
@@ -450,15 +459,15 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
       await paymentsAccount.save({ session });
     }
 
-    // 10. Optionally, handle updates to related Transportation documents here
+    // 11. Optionally, handle updates to related Transportation documents here
     // For example, if Transportation documents reference the payments being updated,
     // ensure they are also updated accordingly.
 
-    // 11. Commit the transaction
+    // 12. Commit the transaction
     await session.commitTransaction();
     session.endSession();
 
-    // 12. Return the updated TransportPayment document
+    // 13. Return the updated TransportPayment document
     res.json(updatedTransportPayment);
   } catch (error) {
     // Abort the transaction in case of error
@@ -473,16 +482,80 @@ transportPaymentsRouter.put('/:id/update', async (req, res) => {
 
 
 // Delete Transport Payment
+
 transportPaymentsRouter.delete('/:id/delete', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const payment = await TransportPayment.findById(req.params.id);
-    if (payment) {
-      await payment.remove();
-      res.json({ message: 'Transport payment record deleted successfully.' });
-    } else {
-      res.status(404).json({ message: 'Transport payment not found.' });
+    const transportPaymentId = req.params.id;
+
+    // 1. Fetch the TransportPayment document within the session
+    const transportPayment = await TransportPayment.findById(transportPaymentId).session(session);
+
+    if (!transportPayment) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: 'Transport payment not found.' });
     }
+
+    // 2. Iterate through all associated payments to remove them from PaymentsAccount
+    for (const payment of transportPayment.payments) {
+      const { referenceId, method: accountId } = payment;
+
+      if (!referenceId) {
+        throw new Error(`Payment with billId ${payment.billId} is missing 'referenceId'.`);
+      }
+
+      if (!accountId) {
+        throw new Error(`Payment with referenceId ${referenceId} is missing 'method' (accountId).`);
+      }
+
+      // Find the PaymentsAccount by accountId within the session
+      const paymentsAccount = await PaymentsAccount.findOne({ accountId }).session(session);
+      if (!paymentsAccount) {
+        throw new Error(`PaymentsAccount with accountId ${accountId} not found.`);
+      }
+
+      // Find the index of the payment to remove based on referenceId
+      const paymentIndex = paymentsAccount.paymentsOut.findIndex(
+        (pa) => pa.referenceId === referenceId
+      );
+
+      if (paymentIndex === -1) {
+        throw new Error(
+          `Payment with referenceId ${referenceId} not found in PaymentsAccount ${accountId}.`
+        );
+      }
+
+      // Remove the payment from paymentsOut
+      paymentsAccount.paymentsOut.splice(paymentIndex, 1);
+      await paymentsAccount.save({ session });
+    }
+
+    // 3. Remove the TransportPayment document
+    await TransportPayment.findByIdAndDelete(transportPaymentId).session(session);
+
+    // 4. Optionally, handle cleanup in related Transportation documents
+    // Assuming Transportation documents have a reference to TransportPayment via 'transportPayment' field
+    await Transportation.updateMany(
+      { transportPayment: transportPaymentId },
+      { $unset: { transportPayment: "" } },
+      { session }
+    );
+
+    // 5. Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    // 6. Send success response
+    res.json({ message: 'Transport payment record and associated payments deleted successfully.' });
   } catch (error) {
+    // Abort the transaction in case of error
+    await session.abortTransaction();
+    session.endSession();
+
+    console.error('Error deleting transport payment:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -507,17 +580,21 @@ transportPaymentsRouter.post('/create', async (req, res) => {
         .json({ message: 'Transport name and type are required.' });
     }
 
+    const trimmedTransportName = transportName.trim();
+    const trimmedTransportType = transportType.trim();
+    const trimmedTransportGst = transportGst ? transportGst.trim() : '';
+
     // Find existing TransportPayment or create a new one
     let transportPayment = await TransportPayment.findOne({
-      transportName: transportName.trim(),
-      transportType: transportType.trim(),
+      transportName: trimmedTransportName,
+      transportType: trimmedTransportType,
     });
 
     if (!transportPayment) {
       transportPayment = new TransportPayment({
-        transportName: transportName.trim(),
-        transportType: transportType.trim(),
-        transportGst: transportGst.trim(),
+        transportName: trimmedTransportName,
+        transportType: trimmedTransportType,
+        transportGst: trimmedTransportGst,
         billings: [],
         payments: [],
         userId: userId,
@@ -525,7 +602,7 @@ transportPaymentsRouter.post('/create', async (req, res) => {
     }
 
     // Add billings if provided
-    if (billings && billings.length > 0) {
+    if (Array.isArray(billings) && billings.length > 0) {
       for (const billing of billings) {
         const trimmedBillId = billing.billId.trim();
 
@@ -548,12 +625,12 @@ transportPaymentsRouter.post('/create', async (req, res) => {
           // Create new Transportation record
           transportation = new Transportation({
             invoiceNo: billing.invoiceNo.trim(),
-            billId: billing.billId.trim(),
-            transportCompanyName: transportName.trim(),
+            billId: trimmedBillId,
+            transportCompanyName: trimmedTransportName,
             transportationCharges: parseFloat(billing.amount),
             purchaseId: trimmedBillId,
-            companyGst: transportGst.trim(),
-            transportType: transportType.trim(),
+            companyGst: trimmedTransportGst,
+            transportType: trimmedTransportType,
             remarks: billing.remarks ? billing.remarks.trim() : '',
             otherDetails: billing.otherDetails ? billing.otherDetails.trim() : '',
           });
@@ -562,26 +639,21 @@ transportPaymentsRouter.post('/create', async (req, res) => {
           // Update existing Transportation record if necessary
           let updated = false;
 
-          if (transportation.invoiceNo !== billing.invoiceNo.trim()) {
-            transportation.invoiceNo = billing.invoiceNo.trim();
-            updated = true;
+          const updatedFields = {
+            invoiceNo: billing.invoiceNo.trim(),
+            transportCompanyName: trimmedTransportName,
+            transportationCharges: parseFloat(billing.amount),
+            companyGst: trimmedTransportGst,
+            transportType: trimmedTransportType,
+          };
+
+          for (const [key, value] of Object.entries(updatedFields)) {
+            if (transportation[key] !== value) {
+              transportation[key] = value;
+              updated = true;
+            }
           }
-          if (transportation.transportCompanyName !== transportName.trim()) {
-            transportation.transportCompanyName = transportName.trim();
-            updated = true;
-          }
-          if (transportation.transportationCharges !== parseFloat(billing.amount)) {
-            transportation.transportationCharges = parseFloat(billing.amount);
-            updated = true;
-          }
-          if (transportation.companyGst !== transportGst.trim()) {
-            transportation.companyGst = transportGst.trim();
-            updated = true;
-          }
-          if (transportation.transportType !== transportType.trim()) {
-            transportation.transportType = transportType.trim();
-            updated = true;
-          }
+
           if (updated) {
             await transportation.save();
           }
@@ -590,13 +662,34 @@ transportPaymentsRouter.post('/create', async (req, res) => {
     }
 
     // Add payments if provided
-    if (payments && payments.length > 0 && payments[0].amount > 0) {
+    if (
+      Array.isArray(payments) &&
+      payments.length > 0 &&
+      payments.some((p) => parseFloat(p.amount) > 0)
+    ) {
+      // Find or create PaymentsAccount based on transportName
+      let paymentAccount = await PaymentsAccount.findOne({
+        accountName: trimmedTransportName,
+      });
+
+      if (!paymentAccount) {
+        paymentAccount = new PaymentsAccount({
+          accountName: trimmedTransportName,
+          paymentsOut: [],
+          paymentsIn: [],
+        });
+      }
+
+      let paymentsAdded = false;
+
       for (const payment of payments) {
         const trimmedBillId = payment.billId.trim();
         const paymentAmount = parseFloat(payment.amount);
-
-        // Generate unique referenceId for each payment using UUID
-        const paymentReferenceId = 'PAY' + Date.now().toString();
+        const trimmedMethod = payment.method.trim();
+        const trimmedSubmittedBy = payment.submittedBy
+          ? payment.submittedBy.trim()
+          : userId;
+        const trimmedRemark = payment.remark ? payment.remark.trim() : '';
 
         // Avoid duplicate payments based on billId, amount, and method
         if (
@@ -604,19 +697,34 @@ transportPaymentsRouter.post('/create', async (req, res) => {
             (p) =>
               p.billId === trimmedBillId &&
               p.amount === paymentAmount &&
-              p.method === payment.method.trim()
+              p.method === trimmedMethod
           )
         ) {
-          transportPayment.payments.push({
+          // Generate unique referenceId using UUID
+          const paymentReferenceId = 'PAY'+ Date.now().toString();
+
+          const newPayment = {
             referenceId: paymentReferenceId,
             amount: paymentAmount,
-            method: payment.method.trim(),
+            method: trimmedMethod,
             billId: trimmedBillId,
-            submittedBy: payment.submittedBy.trim() || userId,
+            submittedBy: trimmedSubmittedBy,
             date: payment.date ? new Date(payment.date) : new Date(),
-            remark: payment.remark.trim(),
-          });
+            remark: trimmedRemark,
+          };
+
+          // Add to TransportPayment
+          transportPayment.payments.push(newPayment);
+
+          // Add to PaymentsAccount (assuming paymentsOut)
+          paymentAccount.paymentsOut.push(newPayment);
+
+          paymentsAdded = true;
         }
+      }
+
+      if (paymentsAdded) {
+        await paymentAccount.save();
       }
     }
 

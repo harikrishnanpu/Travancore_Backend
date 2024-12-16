@@ -120,7 +120,7 @@ transactionRouter.post('/transactions', async (req, res) => {
       paymentFrom,
       paymentTo,
       category,
-      method, // This is the accountId
+      method, // This is the accountId of the primary payment method
       remark,
       billId,
       purchaseId,
@@ -161,14 +161,16 @@ transactionRouter.post('/transactions', async (req, res) => {
       return res.status(404).json({ message: 'Payment account not found.' });
     }
 
-    // Initialize payment entry
-    let accountPaymentEntry = {};
+    let referenceId; 
+    let referenceIdOut;
+    let referenceIdIn;
 
+    // Handle different transaction types
     if (type === 'in') {
       // Payment In
-      const referenceId = 'IN' + Date.now().toString();
+      referenceId = 'IN' + Date.now().toString();
 
-      accountPaymentEntry = {
+      const accountPaymentEntry = {
         amount: parsedAmount,
         method: method,
         remark: `Payment from ${paymentFrom}`,
@@ -178,12 +180,14 @@ transactionRouter.post('/transactions', async (req, res) => {
       };
 
       myAccount.paymentsIn.push(accountPaymentEntry);
-      myAccount.balanceAmount += parsedAmount; // Update balance
+      myAccount.balanceAmount += parsedAmount; 
+      await myAccount.save();
+
     } else if (type === 'out') {
       // Payment Out
-      const referenceId = 'OUT' + Date.now().toString();
+      referenceId = 'OUT' + Date.now().toString();
 
-      accountPaymentEntry = {
+      const accountPaymentEntry = {
         amount: parsedAmount,
         method: method,
         remark: `Payment to ${paymentTo}`,
@@ -193,16 +197,13 @@ transactionRouter.post('/transactions', async (req, res) => {
       };
 
       myAccount.paymentsOut.push(accountPaymentEntry);
-      myAccount.balanceAmount -= parsedAmount; // Update balance
+      myAccount.balanceAmount -= parsedAmount; 
+      // Check for negative balance if needed
+      await myAccount.save();
 
-      // Optional: Check for negative balance
-      // if (myAccount.balanceAmount < 0) {
-      //   return res.status(400).json({ message: 'Insufficient funds in the payment account.' });
-      // }
     } else if (type === 'transfer') {
       // Transfer
       // paymentFrom and paymentTo are accountIds
-      // Validate that both accounts exist
       const fromAccount = await PaymentsAccount.findOne({ accountId: paymentFrom });
       const toAccount = await PaymentsAccount.findOne({ accountId: paymentTo });
 
@@ -214,11 +215,9 @@ transactionRouter.post('/transactions', async (req, res) => {
         return res.status(400).json({ message: 'Insufficient funds in the source account.' });
       }
 
-      // Generate unique reference IDs for each payment entry
-      const referenceIdOut = 'OUT' + Date.now().toString();
-      const referenceIdIn = 'IN' + Date.now().toString();
+      referenceIdOut = 'OUT' + Date.now().toString();
+      referenceIdIn = 'IN' + Date.now().toString();
 
-      // Prepare payment entries
       const transferOutEntry = {
         amount: parsedAmount,
         method: method,
@@ -237,24 +236,18 @@ transactionRouter.post('/transactions', async (req, res) => {
         date: new Date(date),
       };
 
-      // Update fromAccount
       fromAccount.paymentsOut.push(transferOutEntry);
       fromAccount.balanceAmount -= parsedAmount;
 
-      // Update toAccount
       toAccount.paymentsIn.push(transferInEntry);
       toAccount.balanceAmount += parsedAmount;
 
-      // Save updated accounts
       await fromAccount.save();
       await toAccount.save();
     }
 
-    // Save the updated account
-    await myAccount.save();
-
     // Create and save the new DailyTransaction
-    const newTransaction = new DailyTransaction({
+    const newTransactionData = {
       date,
       amount: parsedAmount,
       paymentFrom: paymentFrom || '',
@@ -267,8 +260,17 @@ transactionRouter.post('/transactions', async (req, res) => {
       transportId: transportId || null,
       user: userId,
       type,
-    });
+    };
 
+    // Add reference IDs to the transaction document if applicable
+    if (type === 'in' || type === 'out') {
+      newTransactionData.referenceId = referenceId;
+    } else if (type === 'transfer') {
+      newTransactionData.referenceIdOut = referenceIdOut;
+      newTransactionData.referenceIdIn = referenceIdIn;
+    }
+
+    const newTransaction = new DailyTransaction(newTransactionData);
     const savedTransaction = await newTransaction.save();
 
     res.status(201).json(savedTransaction);
@@ -277,6 +279,113 @@ transactionRouter.post('/transactions', async (req, res) => {
     res.status(500).json({ message: 'Server Error while creating transaction.' });
   }
 });
+
+
+
+
+// DELETE /api/daily/transactions/:id
+transactionRouter.delete('/transactions/:id', async (req, res) => {
+  try {
+    const transactionId = req.params.id;
+
+    // Find the transaction
+    const transaction = await DailyTransaction.findById(transactionId);
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found.' });
+    }
+
+    const { type, amount, method, paymentFrom, paymentTo, user, date, remark, referenceId, referenceIdOut, referenceIdIn } = transaction;
+    const parsedAmount = parseFloat(amount);
+
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid transaction amount.' });
+    }
+
+    // Helper function to remove an entry from payments arrays
+    const removePaymentEntry = (paymentsArray, refId) => {
+      const index = paymentsArray.findIndex((p) => p.referenceId === refId);
+      if (index !== -1) {
+        paymentsArray.splice(index, 1);
+        return true;
+      }
+      return false;
+    };
+
+    // For single-account transactions (in/out), the main account is identified by `method`.
+    // For transfers, we will need both `paymentFrom` and `paymentTo` accounts.
+
+    if (type === 'in') {
+      // Payment In: We added an entry in `myAccount.paymentsIn`
+      // Find the account by `method`
+      const myAccount = await PaymentsAccount.findOne({ accountId: method });
+      if (!myAccount) {
+        return res.status(404).json({ message: 'Linked payment account not found for this transaction.' });
+      }
+
+      // Remove the entry from paymentsIn using referenceId
+      if (!removePaymentEntry(myAccount.paymentsIn, referenceId)) {
+        return res.status(404).json({ message: 'Associated payment entry not found in account.' });
+      }
+
+      // Revert the balance
+      myAccount.balanceAmount -= parsedAmount;
+      await myAccount.save();
+    } else if (type === 'out') {
+      // Payment Out: We added an entry in `myAccount.paymentsOut`
+      const myAccount = await PaymentsAccount.findOne({ accountId: method });
+      if (!myAccount) {
+        return res.status(404).json({ message: 'Linked payment account not found for this transaction.' });
+      }
+
+      // Remove the entry from paymentsOut
+      if (!removePaymentEntry(myAccount.paymentsOut, referenceId)) {
+        return res.status(404).json({ message: 'Associated payment entry not found in account.' });
+      }
+
+      // Revert the balance
+      myAccount.balanceAmount += parsedAmount;
+      await myAccount.save();
+    } else if (type === 'transfer') {
+      // Transfer: We have `referenceIdOut` and `referenceIdIn`
+      // Find both fromAccount and toAccount
+      const fromAccount = await PaymentsAccount.findOne({ accountId: paymentFrom });
+      const toAccount = await PaymentsAccount.findOne({ accountId: paymentTo });
+
+      if (!fromAccount || !toAccount) {
+        return res.status(404).json({ message: 'One or both accounts involved in this transfer no longer exist.' });
+      }
+
+      // Remove the corresponding entries:
+      // fromAccount.paymentsOut should have referenceIdOut
+      if (!removePaymentEntry(fromAccount.paymentsOut, referenceIdOut)) {
+        return res.status(404).json({ message: 'Associated outgoing payment entry not found in fromAccount.' });
+      }
+
+      // toAccount.paymentsIn should have referenceIdIn
+      if (!removePaymentEntry(toAccount.paymentsIn, referenceIdIn)) {
+        return res.status(404).json({ message: 'Associated incoming payment entry not found in toAccount.' });
+      }
+
+      // Revert balances
+      fromAccount.balanceAmount += parsedAmount;
+      toAccount.balanceAmount -= parsedAmount;
+
+      await fromAccount.save();
+      await toAccount.save();
+    } else {
+      return res.status(400).json({ message: 'Invalid transaction type.' });
+    }
+
+    // Finally, delete the transaction itself
+    await DailyTransaction.findByIdAndDelete(transactionId);
+
+    res.json({ message: 'Transaction deleted successfully.' });
+  } catch (error) {
+    console.error('Error deleting transaction:', error);
+    res.status(500).json({ message: 'Server error while deleting transaction.' });
+  }
+});
+
 
 
 // GET /api/daily/transactions/categories
@@ -457,19 +566,6 @@ transactionRouter.post('/trans/transfer', async (req, res) => {
       return res.status(400).json({ message: 'Insufficient funds in the source account.' });
     }
 
-    // Create 'transfer' transaction
-    const transferTransaction = new DailyTransaction({
-      date,
-      amount: parsedPaymentAmount,
-      paymentFrom,
-      paymentTo,
-      category,
-      method,
-      remark,
-      type: 'transfer',
-      user: userId,
-    });
-
     // Generate unique reference IDs for each payment entry
     const referenceIdOut = 'OUT' + Date.now().toString();
     const referenceIdIn = 'IN' + Date.now().toString();
@@ -501,11 +597,26 @@ transactionRouter.post('/trans/transfer', async (req, res) => {
     fromAccount.balanceAmount -= parsedPaymentAmount;
     toAccount.balanceAmount += parsedPaymentAmount;
 
-    // Save changes
+    // Save accounts
     await fromAccount.save();
     await toAccount.save();
 
-    // Save transaction
+    // Create 'transfer' transaction with reference IDs
+    const transferTransaction = new DailyTransaction({
+      date,
+      amount: parsedPaymentAmount,
+      paymentFrom,
+      paymentTo,
+      category,
+      method,
+      remark,
+      type: 'transfer',
+      user: userId,
+      referenceIdOut: referenceIdOut,
+      referenceIdIn: referenceIdIn,
+    });
+
+    // Save the transaction
     await transferTransaction.save();
 
     res.status(201).json({ message: 'Transfer successful.', transaction: transferTransaction });
@@ -514,6 +625,56 @@ transactionRouter.post('/trans/transfer', async (req, res) => {
     res.status(500).json({ message: 'Error in transferring funds.' });
   }
 });
+
+
+
+transactionRouter.delete('/acc/:id/delete', async (req, res) => {
+  const { id } = req.params; // paymentId
+  try {
+    // Find the account that contains this payment in either paymentsIn or paymentsOut.
+    // We'll search for a payment that matches this id. Assuming that 'referenceId'
+    // or '_id' of the sub-document is what identifies the payment. 
+    // If you're using _id for each payment sub-document, you can use that:
+    
+    const account = await PaymentsAccount.findOne({
+      $or: [
+        { 'paymentsIn._id': id },
+        { 'paymentsOut._id': id }
+      ]
+    });
+
+    if (!account) {
+      return res.status(404).json({ message: 'Payment not found' });
+    }
+
+    // Remove the payment from paymentsIn or paymentsOut
+    let removed = false;
+    // Try removing from paymentsIn
+    account.paymentsIn = account.paymentsIn.filter(payment => {
+      if (payment._id.toString() === id) {
+        removed = true;
+        return false;
+      }
+      return true;
+    });
+
+    // If not removed from paymentsIn, try paymentsOut
+    if (!removed) {
+      account.paymentsOut = account.paymentsOut.filter(payment => payment._id.toString() !== id);
+    }
+
+    // Save the updated account (this will trigger the pre-save middleware 
+    // that recalculates the balance).
+    await account.save();
+
+    res.json({ message: 'Payment deleted successfully', account });
+  } catch (error) {
+    console.error('Error deleting payment:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+
+
 
 
 export default transactionRouter;
