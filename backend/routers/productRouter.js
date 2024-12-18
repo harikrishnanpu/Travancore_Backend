@@ -1370,7 +1370,7 @@ productRouter.get(
     try {
       // Fetch all related data in parallel
       const [billings, purchases, returns, damages, openings, products] = await Promise.all([
-        Billing.find().lean(),
+        Billing.find({ isApproved: true }).lean(),
         Purchase.find().lean(),
         Return.find().lean(),
         Damage.find().lean(),
