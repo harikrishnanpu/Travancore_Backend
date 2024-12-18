@@ -30,20 +30,7 @@ customerRouter.post(
       .optional()
       .isISO8601()
       .toDate()
-      .withMessage('Invalid Invoice Date'),
-    body('payments').isArray().withMessage('Payments must be an array'),
-    body('payments.*.amount')
-      .isFloat({ min: 0 })
-      .withMessage('Payment Amount must be a positive number'),
-    body('payments.*.submittedBy')
-      .trim()
-      .notEmpty()
-      .withMessage('Submitted By is required for each payment'),
-    body('payments.*.date')
-      .optional()
-      .isISO8601()
-      .toDate()
-      .withMessage('Invalid Payment Date'),
+      .withMessage('Invalid Invoice Date')
     // You can add more validations as needed
   ],
   async (req, res) => {
@@ -76,8 +63,13 @@ customerRouter.post(
           invoiceNo: bill.invoiceNo.trim(),
           billAmount: parseFloat(bill.billAmount),
           invoiceDate: bill.invoiceDate ? new Date(bill.invoiceDate) : undefined,
-        })),
-        payments: payments.map((payment) => ({
+        }))
+      });
+
+
+      if (payments[0]?.amount > 0) {
+        
+        const mappedPayments = payments.map((payment) => ({
           amount: parseFloat(payment.amount),
           date: payment.date ? new Date(payment.date) : undefined,
           submittedBy: userId,
@@ -85,8 +77,11 @@ customerRouter.post(
           referenceId: referenceId,
           remark: payment.remark ? payment.remark.trim() : '',
           invoiceNo: payment.invoiceNo
-        })),
-      });
+        }));
+      
+        newCustomerAccount.payments.push(...mappedPayments);
+      }
+      
       // Save the new customer account to the database
       const savedAccount = await newCustomerAccount.save();
 
