@@ -438,7 +438,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
                       <th>Qty</th>
                       <th>Unit</th>
                       <th>Price</th>
-                      <th>Qty(Nos)</th>
+                      <th>Qty(per psc)</th>
                       <th>Discount</th>
                       <th>Total Amount</th>
                   </tr>
