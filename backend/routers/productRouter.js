@@ -388,6 +388,9 @@ productRouter.put(
       product.breadth = req.body.breadth;
       product.size = req.body.size;
       product.unit = req.body.unit;
+      product.type = req.body.type;
+      product.cashPartPrice = req.body.cashPartPrice;
+      product.billPartPrice = req.body.billPartPrice;
       const updatedProduct = await product.save();
       res.send({ message: 'Product Updated', product: updatedProduct });
     } else {

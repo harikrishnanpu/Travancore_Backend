@@ -688,7 +688,7 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
     const totalProducts = productList.length;
     const billingAmount = parseFloat(totals.billingAmount) || 0;
 
-    const productsPerPage = 10;
+    const productsPerPage = 5;
     const totalPages = Math.ceil(productList.length / productsPerPage);
 
     // Generate a unique QR Code ID
@@ -778,10 +778,10 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
               <th>Brand</th>
               <th>Category</th>
               <th>Purchased Qty</th>
-              <th>Entered Qty</th>
-              <th>Purchased Unit</th>
-              <th>P.Unit</th>
-              <th>S.Unit</th>
+              <th>P. Unit</th>
+              <th>Qty (in Nos)</th>
+              <th>Cash Part</th>
+              <th>Bill Part</th>
               <th>Total</th>
               <th>Other Expense</th>
               <th>Grand Total</th>
@@ -802,9 +802,9 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
                   <td>${safeGet(product.quantity)}</td>
                   <td>${safeGet(product.pUnit) || 'N/A'}</td>
                   <td>${safeGet(product.quantityInNumbers)}</td>
-                  <td>${safeGet(product.pUnit) || 'N/A'}</td>
-                  <td>${safeGet(product.sUnit) || 'N/A'}</td>
-                  <td>₹${(parseFloat(product.billPartPrice) + parseFloat(product.cashPartPrice) ).toFixed(2)}</td>
+                  <td>${safeGet(product.cashPartPrice) || 'N/A'}</td>
+                  <td>${safeGet(product.billPartPrice) || 'N/A'}</td>
+                  <td>₹${((parseFloat(product.billPartPrice) + parseFloat(product.cashPartPrice) ) * product.quantity ).toFixed(2)}</td>
                   <td>₹${parseFloat(product.allocatedOtherExpense).toFixed(2)}</td>
                   <td>₹${
                   
@@ -812,7 +812,7 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
                     product.quantity *
                     (parseFloat(product.billPartPrice) + parseFloat(product.cashPartPrice))
                   ) + parseFloat(
-                   product.allocatedOtherExpense * product.quantity
+                   product.allocatedOtherExpense
                     ) )
                     
                   .toFixed(2)}</td>
