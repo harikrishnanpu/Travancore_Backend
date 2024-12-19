@@ -246,7 +246,6 @@ userRouter.put(
 
 userRouter.get('/get-face-data/:id', async (req,res) =>{
   const userId = req.params.id
-  console.log("req")
   try{
     const user = await User.findById(userId);
     if (!user) {

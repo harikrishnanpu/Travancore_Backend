@@ -21,7 +21,6 @@ billingRouter.post('/create', async (req, res) => {
 
   try {
     const {
-      invoiceNo,
       invoiceDate,
       salesmanName,
       expectedDeliveryDate,
@@ -46,6 +45,8 @@ billingRouter.post('/create', async (req, res) => {
       userId,
       products, // Expected to be an array of objects with item_id and quantity
     } = req.body;
+
+    let { invoiceNo } = req.body;
 
     const referenceId = 'BILL' + Date.now().toString();
 
@@ -74,11 +75,19 @@ billingRouter.post('/create', async (req, res) => {
     // -----------------------
     const existingBill = await Billing.findOne({ invoiceNo }).session(session);
     if (existingBill) {
-      await session.abortTransaction();
-      session.endSession();
-      return res
-        .status(400)
-        .json({ message: `Invoice number ${invoiceNo} already exists` });
+      const billing = await Billing.findOne({ invoiceNo: /^KK\d+$/ })
+      .sort({ invoiceNo: -1 })
+      .collation({ locale: "en", numericOrdering: true });
+
+      if (billing) {
+        const lastInvoiceNumber = parseInt(billing.invoiceNo.slice(2), 10) || 0; // Extract the number part after "KK"
+        invoiceNo = "KK" + (lastInvoiceNumber + 1).toString().padStart(2, '0'); // Ensures at least two digits
+      } else {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(500).json({ message: "Error generating new invoice number" });
+      }
+
     }
 
     // -----------------------
@@ -123,6 +132,9 @@ billingRouter.post('/create', async (req, res) => {
     // -----------------------
     // 5. Find or Create Customer Account
     // -----------------------
+
+
+
     let customerAccount = await CustomerAccount.findOne({
       customerId: customerId.trim(),
     }).session(session);
@@ -143,6 +155,7 @@ billingRouter.post('/create', async (req, res) => {
     const existingBillInCustomer = customerAccount.bills.find(
       (bill) => bill.invoiceNo === invoiceNo.trim()
     );
+
     if (existingBillInCustomer) {
       await session.abortTransaction();
       session.endSession();
@@ -343,6 +356,7 @@ billingRouter.post('/create', async (req, res) => {
       message: 'Billing data saved successfully',
       billingData,
     });
+    
   } catch (error) {
     console.log('Error saving billing data:', error);
     // Attempt to abort the transaction if it's still active
