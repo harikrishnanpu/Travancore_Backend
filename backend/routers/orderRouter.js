@@ -264,12 +264,12 @@ orderRouter.put(
 
 
 orderRouter.get('/summary/all', async (req,res)=>{
-  const Allusers = await User.count()
-  const AllBills = await Billing.count()
-  const AllReturns = await Return.count()
-  const AllProducts = await Product.count()
-  const AllPurchases = await Purchase.count()
-  const AllDamages = await Damage.count()
+  const Allusers = await User.countDocuments()
+  const AllBills = await Billing.countDocuments()
+  const AllReturns = await Return.countDocuments()
+  const AllProducts = await Product.countDocuments()
+  const AllPurchases = await Purchase.countDocuments()
+  const AllDamages = await Damage.countDocuments()
   const bills = await Billing.find(); // Get all bills
   const Billingsum = bills.reduce((sum, bill) => sum + parseFloat(bill.billingAmount), 0); // Calculate the sum
 

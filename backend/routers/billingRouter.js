@@ -940,7 +940,7 @@ billingRouter.delete('/billings/delete/:id', async (req, res) => {
     }
 
     // === 7. Remove the Billing Entry ===
-    await Billing.findByIdAndRemove(billingId).session(session);
+    await Billing.findOneAndDelete(billingId).session(session);
 
     if(customerAccount){
       // === 8. Save the Updated Customer Account ===

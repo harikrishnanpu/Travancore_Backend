@@ -32,6 +32,7 @@ const productSchema = new mongoose.Schema(
     billPartPrice: {type: Number},
     cashPartPrice: {type: Number},
     sellerAddress: { type: String},
+    type: {type: String},
     countInStock: { type: Number, required: true },
     rating: { type: Number,},
     numReviews: { type: Number,},
