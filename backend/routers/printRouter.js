@@ -439,7 +439,6 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
                       <th>Unit</th>
                       <th>Price</th>
                       <th>Qty(Nos)</th>
-                      <th>Unit Rate</th>
                       <th>Discount</th>
                       <th>Total Amount</th>
                   </tr>
@@ -456,7 +455,6 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
                                 <td>${safeGet(product.unit)}</td>
                                 <td>${safeGet(product.sellingPrice)}</td>
                                 <td>${safeGet(product.quantity).toFixed(2)}</td>
-                                <td>${safeGet(product.sellingPriceinQty)}</td>
                                 <td>${(product.quantity * parseFloat(perItemDiscount)).toFixed(2)}</td>
                                 <td>${((product.quantity * parseFloat(product.sellingPriceinQty)) - (product.quantity * parseFloat(perItemDiscount))).toFixed(2) || 'N/A'}</td>
                             </tr>`).join('')
