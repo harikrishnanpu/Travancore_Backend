@@ -3,6 +3,12 @@ import QRCode from 'qrcode';
 import QrCodeDB from '../models/qrcodeVerificstionModal.js';
 import { chromium } from 'playwright';
 import Return from '../models/returnModal.js';
+import { DailyTransaction } from '../models/dailyTransactionsModal.js';
+import puppeteer from 'puppeteer';
+import Billing from '../models/billingModal.js';
+import CustomerAccount from '../models/customerModal.js';
+import SupplierAccount from '../models/supplierAccountModal.js';
+import TransportPayment from '../models/transportPayments.js';
 
 const printRouter = express.Router();
 
@@ -386,7 +392,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
           <div class="invoice-info">
               <div>
                   <p style="font-size: 12px;font-weight: bolder;">Estimate no: <strong>${invoiceNo}</strong></p>
-                  <p>Invoice Date: <strong>${new Date(invoiceDate).toLocaleDateString()}</strong></p>
+                  <p>Estimation Date: <strong>${new Date(invoiceDate).toLocaleDateString()}</strong></p>
                   <p>Expected Delivery Date: <strong>${new Date(expectedDeliveryDate).toLocaleDateString()}</strong></p>
                   <p>Salesman: <strong>${salesmanName}</strong></p>
                   <p>Additional Info:</p>
@@ -649,6 +655,279 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
   } catch (error) {
     console.error('Error generating invoice:', error);
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+
+
+
+// POST /api/daily/transactions/generate-report
+printRouter.post('/daily/generate-report', async (req, res) => {
+  try {
+    const { reportData, reportParams } = req.body;
+
+    // Validate received data
+    if (!reportData || !Array.isArray(reportData)) {
+      return res.status(400).send('<h3>Error: Invalid report data.</h3>');
+    }
+
+    // Destructure report parameters
+    const { fromDate, toDate, activeTab, filterCategory, filterMethod, searchQuery, sortOption } = reportParams;
+
+    // Generate QR Code (optional)
+    const reportId = `report-${Date.now()}`;
+    const qrCodeDataURL = await QRCode.toDataURL(reportId);
+
+    // Helper Functions
+    const capitalizeFirstLetter = (string) => {
+      if (!string) return '';
+      return string.charAt(0).toUpperCase() + string.slice(1);
+    };
+
+    const formatSortOption = (option) => {
+      switch(option) {
+        case 'date_desc':
+          return 'Date (Latest First)';
+        case 'date_asc':
+          return 'Date (Oldest First)';
+        case 'amount_asc':
+          return 'Amount (Low to High)';
+        case 'amount_desc':
+          return 'Amount (High to Low)';
+        default:
+          return 'Unknown';
+      }
+    };
+
+    // Calculate Totals
+    const totalIn = dataFilter(reportData, 'in');
+    const totalOut = dataFilter(reportData, 'out');
+    const totalTransfer = dataFilter(reportData, 'transfer');
+
+    function dataFilter(data, type) {
+      return data
+        .filter(t => t.type === type)
+        .reduce((sum, t) => sum + parseFloat(t.amount), 0)
+        .toFixed(2);
+    }
+
+    // Function to generate report HTML
+    const generateReportHTML = (data, params, qrCode) => `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Daily Transactions Report</title>
+          <style>
+              body {
+                  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                  margin: 0;
+                  padding: 0;
+                  background-color: #f9f9f9;
+                  color: #333;
+              }
+              .container {
+                  width: 90%;
+                  margin: 20px auto;
+                  background-color: #fff;
+                  padding: 20px;
+                  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                  border-radius: 8px;
+              }
+              .header {
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: center;
+                  border-bottom: 2px solid #eee;
+                  padding-bottom: 10px;
+                  margin-bottom: 20px;
+              }
+              .header div {
+                  text-align: left;
+              }
+              .header img {
+                  width: 100px;
+                  height: auto;
+              }
+              .filters {
+                  margin-bottom: 20px;
+                  padding: 15px;
+                  background-color: #f5f5f5;
+                  border-radius: 8px;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+              }
+              .filters p {
+                  margin: 5px 0;
+                  font-size: 14px;
+              }
+              .totals {
+                  display: flex;
+                  justify-content: space-between;
+                  padding: 15px;
+                  background-color: #f5f5f5;
+                  border-radius: 8px;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                  font-size: 16px;
+                  margin-bottom: 20px;
+              }
+              .totals div {
+                  flex: 1;
+                  text-align: center;
+              }
+              .totals div:first-child {
+                  border-right: 1px solid #ddd;
+              }
+              .totals div:last-child {
+                  border-left: 1px solid #ddd;
+              }
+              table {
+                  width: 100%;
+                  border-collapse: collapse;
+                  margin-bottom: 20px;
+                  font-size: 14px;
+              }
+              th, td {
+                  border: 1px solid #ddd;
+                  padding: 12px;
+                  text-align: center;
+              }
+              th {
+                  background-color: #f0f0f0;
+                  font-weight: bold;
+              }
+              tr:nth-child(even) {
+                  background-color: #f9f9f9;
+              }
+              .type-in {
+                  background-color: #e6ffed;
+                  color: #2e7d32;
+                  font-weight: bold;
+              }
+              .type-out {
+                  background-color: #ffe6e6;
+                  color: #c62828;
+                  font-weight: bold;
+              }
+              .type-transfer {
+                  background-color: #e6f0ff;
+                  color: #1565c0;
+                  font-weight: bold;
+              }
+              footer {
+                  text-align: center;
+                  margin-top: 40px;
+                  font-size: 12px;
+                  color: #777;
+              }
+              @media print {
+                  body * {
+                    visibility: hidden;
+                  }
+                  .container, .container * {
+                    visibility: visible;
+                  }
+                  .container {
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                  }
+              }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <div class="header">
+                  <div>
+                      <h1>KK TRADING</h1>
+                      <p>Comprehensive Daily Transactions Report</p>
+                      <p>From: ${new Date(params.fromDate).toLocaleDateString()} To: ${new Date(params.toDate).toLocaleDateString()}</p>
+                  </div>
+                  <div>
+                      <img src="${qrCode}" alt="QR Code" />
+                  </div>
+              </div>
+
+              <div class="filters">
+                  <p><strong>Active Tab:</strong> ${capitalizeFirstLetter(params.activeTab)}</p>
+                  <p><strong>Category Filter:</strong> ${params.filterCategory || 'All'}</p>
+                  <p><strong>Method Filter:</strong> ${params.filterMethod || 'All'}</p>
+                  <p><strong>Search Query:</strong> ${params.searchQuery || 'None'}</p>
+                  <p><strong>Sort Option:</strong> ${formatSortOption(params.sortOption)}</p>
+              </div>
+
+              <div class="totals">
+                  <div>
+                      <p>Total Payment In:</p>
+                      <p style="color: #2e7d32;">₹ ${totalIn}</p>
+                  </div>
+                  <div>
+                      <p>Total Payment Out:</p>
+                      <p style="color: #c62828;">₹ ${totalOut}</p>
+                  </div>
+                  <div>
+                      <p>Total Transfer:</p>
+                      <p style="color: #1565c0;">₹ ${totalTransfer}</p>
+                  </div>
+              </div>
+
+              <table>
+                  <thead>
+                      <tr>
+                          <th>#</th>
+                          <th>Date & Time</th>
+                          <th>Category</th>
+                          <th>Type</th>
+                          <th>Payment From</th>
+                          <th>Payment To</th>
+                          <th>Amount (₹)</th>
+                          <th>Method</th>
+                          <th>Remark</th>
+                          <th>Source</th>
+                      </tr>
+                  </thead>
+                  <tbody>
+                      ${data.map((trans, index) => {
+                        // Determine the class based on transaction type for coloring
+                        let typeClass = '';
+                        if (trans.type === 'in') typeClass = 'type-in';
+                        else if (trans.type === 'out') typeClass = 'type-out';
+                        else if (trans.type === 'transfer') typeClass = 'type-transfer';
+
+                        return `
+                          <tr class="${typeClass}">
+                              <td>${index + 1}</td>
+                              <td>${new Date(trans.date).toLocaleString()}</td>
+                              <td>${trans.category || 'N/A'}</td>
+                              <td>${capitalizeFirstLetter(trans.type)}</td>
+                              <td>${trans.paymentFrom || 'N/A'}</td>
+                              <td>${trans.paymentTo || 'N/A'}</td>
+                              <td>₹ ${parseFloat(trans.amount).toFixed(2)}</td>
+                              <td>${trans.method || 'N/A'}</td>
+                              <td>${trans.remark || 'N/A'}</td>
+                              <td>${capitalizeFirstLetter(trans.source)}</td>
+                          </tr>
+                      `;
+                      }).join('')}
+                  </tbody>
+              </table>
+              
+              <footer>
+                  <p>Daily Report - KKTRADING.</p>
+              </footer>
+          </div>
+      </body>
+      </html>
+    `;
+
+    const reportHTML = generateReportHTML(reportData, reportParams, qrCodeDataURL);
+
+    // Send the HTML as a response
+    res.setHeader('Content-Type', 'text/html');
+    res.send(reportHTML);
+  } catch (error) {
+    console.error('Error generating report:', error);
+    res.status(500).send('<h3>Internal Server Error</h3>');
   }
 });
 

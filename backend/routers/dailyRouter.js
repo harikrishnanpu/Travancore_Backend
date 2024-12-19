@@ -90,6 +90,8 @@ transactionRouter.get('/transactions', async (req, res) => {
         _id: transaction._id,
         date: transaction.date,
         amount: transaction.amount,
+        paymentFrom: transaction.paymentFrom,
+        paymentTo: transaction.paymentTo,
         type: transaction.type,
         paymentDetails: transaction.type === 'in' ? transaction.paymentFrom : transaction.paymentTo,
         method: transaction.method,
@@ -485,6 +487,7 @@ transactionRouter.get('/allbill/payments', async (req, res) => {
           payments.push({
             billingId: billing._id,
             amount: payment.amount,
+            paymentFrom: billing.customerName,
             method: payment.method,
             date: payment.date,
             remark: payment.remark,
@@ -498,6 +501,7 @@ transactionRouter.get('/allbill/payments', async (req, res) => {
           otherExpenses.push({
             billingId: billing._id,
             amount: expense.amount,
+            paymentFrom: billing.customerName,
             remark: expense.remark,
             date: expense.date,
           });
