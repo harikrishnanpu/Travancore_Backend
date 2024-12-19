@@ -566,9 +566,9 @@ transactionRouter.post('/trans/transfer', async (req, res) => {
     }
 
     // Check if the `fromAccount` has sufficient balance
-    if (fromAccount.balanceAmount < parsedPaymentAmount) {
-      return res.status(400).json({ message: 'Insufficient funds in the source account.' });
-    }
+    // if (fromAccount.balanceAmount < parsedPaymentAmount) {
+    //   return res.status(400).json({ message: 'Insufficient funds in the source account.' });
+    // }
 
     // Generate unique reference IDs for each payment entry
     const referenceIdOut = 'OUT' + Date.now().toString();
