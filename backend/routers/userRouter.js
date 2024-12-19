@@ -3,7 +3,7 @@ import expressAsyncHandler from 'express-async-handler';
 import bcrypt from 'bcryptjs';
 import data from '../data.js';
 import User from '../models/userModel.js';
-import { generateToken, isAdmin, isAuth } from '../utils.js';
+// import { generateToken, isAdmin, isAuth } from '../utils.js';
 import AttendenceModel from '../models/attendenceModel.js';
 import Location from '../models/locationModel.js'
 import Billing from '../models/billingModal.js';
@@ -38,9 +38,9 @@ userRouter.get(
 userRouter.post(
   '/signin',
   expressAsyncHandler(async (req, res) => {
+    try{
     const user = await User.findOne({ email: req.body.email });
-    const attendance = new AttendenceModel({ userId:  user._id});
-    await attendance.save();
+   
     if (user) {
       if (bcrypt.compareSync(req.body.password, user.password)) {
         res.send({
@@ -49,12 +49,15 @@ userRouter.post(
           email: user.email,
           isAdmin: user.isAdmin,
           isSeller: user.isSeller,
-          token: generateToken(user),
-          attendence: attendance
         });
         return;
       }
     }
+
+  } catch (error) {
+    console.log('Error during sign-in:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
     res.status(401).send({ message: 'Invalid email or password' });
   })
 );
@@ -140,7 +143,6 @@ userRouter.post(
 
 userRouter.put(
   '/profile',
-  isAuth,
   expressAsyncHandler(async (req, res) => {
     const user = await User.findById(req.body._id);
     if (user) {
@@ -170,8 +172,6 @@ userRouter.put(
 
 userRouter.get(
   '/',
-  isAuth,
-  isAdmin,
   expressAsyncHandler(async (req, res) => {
     const users = await User.find({});
     res.send(users);
@@ -180,8 +180,6 @@ userRouter.get(
 
 userRouter.delete(
   '/:id',
-  isAuth,
-  isAdmin,
   expressAsyncHandler(async (req, res) => {
     const user = await User.findById(req.params.id);
     if (user) {
@@ -229,8 +227,6 @@ userRouter.get('/user/:id',
 
 userRouter.put(
   '/:id',
-  isAuth,
-  isAdmin,
   expressAsyncHandler(async (req, res) => {
     const user = await User.findById(req.params.id);
     if (user) {
@@ -250,16 +246,17 @@ userRouter.put(
 
 userRouter.get('/get-face-data/:id', async (req,res) =>{
   const userId = req.params.id
-
+  console.log("req")
   try{
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }else if(user.faceDescriptor){
-      return res.status(200).json(user)
+       res.status(404).json({ message: 'User not found' });
+    }else if(user){
+       res.status(200).json(user)
     }
   }catch (error) {
-    return res.status(404).json({ message: 'Error Occured' });
+    console.log(error)
+     res.status(404).json({ message: 'Error Occured' });
   }
 
 
