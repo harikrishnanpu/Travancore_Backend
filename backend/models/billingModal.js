@@ -38,7 +38,8 @@ const BillingSchema = new mongoose.Schema(
         amount: { type: Number },
         remark: { type: String },
         date: { type: Date, default: Date.now },
-        method: { type: String }
+        method: { type: String },
+        referenceId: { type: String },
       },
     ],
 

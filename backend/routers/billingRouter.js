@@ -356,7 +356,7 @@ billingRouter.post('/create', async (req, res) => {
       message: 'Billing data saved successfully',
       billingData,
     });
-    
+
   } catch (error) {
     console.log('Error saving billing data:', error);
     // Attempt to abort the transaction if it's still active
@@ -1355,6 +1355,8 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
       return res.status(400).json({ message: "No valid expenses provided." });
     }
 
+    const expReference = "EXP" + Date.now().toString();
+
     // Append valid otherExpenses to the billing document
     billing.otherExpenses.push(
       ...validOtherExpenses.map(expense => ({
@@ -1362,6 +1364,7 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
         remark: expense.remark || "",
         method: paymentMethod,
         date: new Date(),
+        referenceId: expReference,
       }))
     );
 
@@ -1382,7 +1385,7 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
         method: paymentMethod,
         submittedBy: userId,
         date: new Date(),
-        referenceId: "EXP" + Date.now().toString() + Math.floor(Math.random() * 1000),
+        referenceId: expReference,
       }));
 
       account.paymentsOut.push(...expensePayments);
@@ -1402,6 +1405,66 @@ billingRouter.post("/billing/:id/addExpenses", async (req, res) => {
     res.status(500).json({ message: "Error adding expenses" });
   }
 });
+
+
+// DELETE function for other expenses
+// DELETE function for other expenses
+billingRouter.delete("/billing/:id/deleteExpense/:expenseId", async (req, res) => {
+  try {
+    const { id, expenseId } = req.params;
+
+    // Find the billing document by ID
+    const billing = await Billing.findById(id);
+    if (!billing) {
+      return res.status(404).json({ message: "Billing not found" });
+    }
+
+    // Find and remove the expense by its _id
+    const expenseIndex = billing.otherExpenses.findIndex(
+      (expense) => expense._id.toString() === expenseId
+    );
+
+    if (expenseIndex === -1) {
+      return res.status(404).json({ message: "Expense not found" });
+    }
+
+    const [removedExpense] = billing.otherExpenses.splice(expenseIndex, 1);
+
+    try {
+      const referenceId = removedExpense.referenceId;
+
+      const account = await PaymentsAccount.findOne({ accountId: removedExpense.method });
+
+      if (!account) {
+        console.log(`No account found for accountId: ${removedExpense.method}`);
+        return res.status(404).json({ message: "Payment account not found" });
+      }
+
+      // Remove the corresponding payment from the account's paymentsOut based on the referenceId
+      const paymentIndex = account.paymentsOut.findIndex(
+        (payment) => payment.referenceId === referenceId
+      );
+
+      if (paymentIndex !== -1) {
+        account.paymentsOut.splice(paymentIndex, 1);
+        await account.save();
+      }
+    } catch (error) {
+      console.error("Error updating payment account:", error);
+      return res.status(500).json({ message: "Error updating payment account" });
+    }
+
+    // Save the updated billing document
+    await billing.save();
+
+    res.status(200).json({ message: "Expense deleted successfully", billing });
+  } catch (error) {
+    console.error("Error deleting expense:", error);
+    res.status(500).json({ message: "Error deleting expense" });
+  }
+});
+
+
 
 
 
