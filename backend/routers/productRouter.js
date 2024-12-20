@@ -288,8 +288,10 @@ productRouter.get(
 productRouter.post(
   '/',
   expressAsyncHandler(async (req, res) => {
+
+    try{
     const product = new Product({
-      name: 'Product Name',
+      name: 'Sample name ' + Date.now().toString(),
       item_id: Date.now(),
       seller: 'Supplier',
       image: '/images/',
@@ -309,7 +311,12 @@ productRouter.post(
       description: 'Sample description',
     });
     const createdProduct = await product.save();
-    res.send({ message: 'Product Created', product: createdProduct });
+    res.status(201).send(createdProduct);
+
+  }catch (error){
+    console.log("error creating product", error)
+    res.status(500).json({ message: 'Error creating product' });
+  }
   })
 );
 
