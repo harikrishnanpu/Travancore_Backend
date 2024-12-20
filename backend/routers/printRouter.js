@@ -9,6 +9,7 @@ import Billing from '../models/billingModal.js';
 import CustomerAccount from '../models/customerModal.js';
 import SupplierAccount from '../models/supplierAccountModal.js';
 import TransportPayment from '../models/transportPayments.js';
+import PaymentsAccount from '../models/paymentsAccountModal.js';
 
 const printRouter = express.Router();
 
@@ -674,6 +675,9 @@ printRouter.post('/daily/generate-report', async (req, res) => {
     // Destructure report parameters
     const { fromDate, toDate, activeTab, filterCategory, filterMethod, searchQuery, sortOption } = reportParams;
 
+    // Fetch all payment accounts
+    const paymentAccounts = await PaymentsAccount.find({});
+
     // Generate QR Code (optional)
     const reportId = `report-${Date.now()}`;
     const qrCodeDataURL = await QRCode.toDataURL(reportId);
@@ -712,7 +716,7 @@ printRouter.post('/daily/generate-report', async (req, res) => {
     }
 
     // Function to generate report HTML
-    const generateReportHTML = (data, params, qrCode) => `
+    const generateReportHTML = (data, params, qrCode, paymentAccounts) => `
       <!DOCTYPE html>
       <html lang="en">
       <head>
@@ -724,24 +728,25 @@ printRouter.post('/daily/generate-report', async (req, res) => {
                   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                   margin: 0;
                   padding: 0;
-                  background-color: #f9f9f9;
+                  background-color: #f4f4f4;
                   color: #333;
               }
               .container {
                   width: 90%;
-                  margin: 20px auto;
+                  max-width: 1200px;
+                  margin: 30px auto;
                   background-color: #fff;
-                  padding: 20px;
-                  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-                  border-radius: 8px;
+                  padding: 25px;
+                  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                  border-radius: 10px;
               }
               .header {
                   display: flex;
                   justify-content: space-between;
                   align-items: center;
-                  border-bottom: 2px solid #eee;
-                  padding-bottom: 10px;
-                  margin-bottom: 20px;
+                  border-bottom: 1px solid #ddd;
+                  padding-bottom: 15px;
+                  margin-bottom: 25px;
               }
               .header div {
                   text-align: left;
@@ -750,12 +755,35 @@ printRouter.post('/daily/generate-report', async (req, res) => {
                   width: 100px;
                   height: auto;
               }
+              .payment-accounts {
+                  margin-bottom: 25px;
+              }
+              .payment-accounts h2 {
+                  font-size: 18px;
+                  margin-bottom: 10px;
+                  border-bottom: 1px solid #ddd;
+                  padding-bottom: 5px;
+              }
+              .payment-accounts table {
+                  width: 100%;
+                  border-collapse: collapse;
+                  font-size: 14px;
+              }
+              .payment-accounts th, .payment-accounts td {
+                  border: 1px solid #ddd;
+                  padding: 10px;
+                  text-align: center;
+              }
+              .payment-accounts th {
+                  background-color: #f9f9f9;
+                  font-weight: 600;
+              }
               .filters {
-                  margin-bottom: 20px;
+                  margin-bottom: 25px;
                   padding: 15px;
-                  background-color: #f5f5f5;
+                  background-color: #fafafa;
                   border-radius: 8px;
-                  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                  border: 1px solid #eee;
               }
               .filters p {
                   margin: 5px 0;
@@ -764,59 +792,62 @@ printRouter.post('/daily/generate-report', async (req, res) => {
               .totals {
                   display: flex;
                   justify-content: space-between;
-                  padding: 15px;
-                  background-color: #f5f5f5;
-                  border-radius: 8px;
-                  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-                  font-size: 16px;
-                  margin-bottom: 20px;
+                  margin-bottom: 25px;
               }
               .totals div {
                   flex: 1;
                   text-align: center;
+                  padding: 15px;
+                  background-color: #fafafa;
+                  border: 1px solid #eee;
+                  border-radius: 8px;
+                  margin: 0 5px;
               }
               .totals div:first-child {
-                  border-right: 1px solid #ddd;
+                  margin-left: 0;
               }
               .totals div:last-child {
-                  border-left: 1px solid #ddd;
+                  margin-right: 0;
+              }
+              .totals p {
+                  margin: 5px 0;
+                  font-size: 16px;
               }
               table {
                   width: 100%;
                   border-collapse: collapse;
-                  margin-bottom: 20px;
                   font-size: 14px;
               }
               th, td {
                   border: 1px solid #ddd;
-                  padding: 12px;
+                  padding: 10px;
                   text-align: center;
               }
               th {
-                  background-color: #f0f0f0;
-                  font-weight: bold;
+                  background-color: #f9f9f9;
+                  font-weight: 600;
               }
               tr:nth-child(even) {
-                  background-color: #f9f9f9;
+                  background-color: #fdfdfd;
               }
               .type-in {
-                  background-color: #e6ffed;
+                  background-color: #e8f5e9;
                   color: #2e7d32;
                   font-weight: bold;
               }
               .type-out {
-                  background-color: #ffe6e6;
+                  background-color: #ffebee;
                   color: #c62828;
                   font-weight: bold;
               }
               .type-transfer {
-                  background-color: #e6f0ff;
+                  background-color: #e3f2fd;
                   color: #1565c0;
                   font-weight: bold;
               }
               footer {
                   text-align: center;
-                  margin-top: 40px;
+                  margin-top: 30px;
                   font-size: 12px;
                   color: #777;
               }
@@ -840,14 +871,36 @@ printRouter.post('/daily/generate-report', async (req, res) => {
               <div class="header">
                   <div>
                       <h1>KK TRADING</h1>
-                      <p>Comprehensive Daily Transactions Report</p>
+                      <p>Daily Transactions Report</p>
                       <p>From: ${new Date(params.fromDate).toLocaleDateString()} To: ${new Date(params.toDate).toLocaleDateString()}</p>
                   </div>
                   <div>
                       <img src="${qrCode}" alt="QR Code" />
                   </div>
               </div>
-
+              
+              <div class="payment-accounts">
+                  <h2>Payment Accounts Balances</h2>
+                  <table>
+                      <thead>
+                          <tr>
+                              <th>Account ID</th>
+                              <th>Account Name</th>
+                              <th>Balance Amount (₹)</th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                          ${paymentAccounts.map(account => `
+                              <tr>
+                                  <td>${account.accountId}</td>
+                                  <td>${account.accountName}</td>
+                                  <td>₹ ${account.balanceAmount.toFixed(2)}</td>
+                              </tr>
+                          `).join('')}
+                      </tbody>
+                  </table>
+              </div>
+              
               <div class="filters">
                   <p><strong>Active Tab:</strong> ${capitalizeFirstLetter(params.activeTab)}</p>
                   <p><strong>Category Filter:</strong> ${params.filterCategory || 'All'}</p>
@@ -894,6 +947,11 @@ printRouter.post('/daily/generate-report', async (req, res) => {
                         else if (trans.type === 'out') typeClass = 'type-out';
                         else if (trans.type === 'transfer') typeClass = 'type-transfer';
 
+                        let transmethod = trans.method;
+                        if(paymentAccounts){
+                          const acc = paymentAccounts.find(paymentAccount => paymentAccount.accountId === trans.method)
+                          transmethod = acc? acc.accountName : trans.method;
+                        }
                         return `
                           <tr class="${typeClass}">
                               <td>${index + 1}</td>
@@ -903,7 +961,7 @@ printRouter.post('/daily/generate-report', async (req, res) => {
                               <td>${trans.paymentFrom || 'N/A'}</td>
                               <td>${trans.paymentTo || 'N/A'}</td>
                               <td>₹ ${parseFloat(trans.amount).toFixed(2)}</td>
-                              <td>${trans.method || 'N/A'}</td>
+                              <td>${transmethod || 'N/A'}</td>
                               <td>${trans.remark || 'N/A'}</td>
                               <td>${capitalizeFirstLetter(trans.source)}</td>
                           </tr>
@@ -913,14 +971,14 @@ printRouter.post('/daily/generate-report', async (req, res) => {
               </table>
               
               <footer>
-                  <p>Daily Report - KKTRADING.</p>
+                  <p>Daily Report - KK TRADING.</p>
               </footer>
           </div>
       </body>
       </html>
     `;
 
-    const reportHTML = generateReportHTML(reportData, reportParams, qrCodeDataURL);
+    const reportHTML = generateReportHTML(reportData, reportParams, qrCodeDataURL, paymentAccounts);
 
     // Send the HTML as a response
     res.setHeader('Content-Type', 'text/html');
