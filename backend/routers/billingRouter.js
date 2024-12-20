@@ -1108,11 +1108,12 @@ billingRouter.get('/driver/', async (req, res) => {
   const limit = parseFloat(req.query.limit) || 3; // Default to 10 items per page
 
   try {
-    const totalBillings = await Billing.countDocuments(); // Get total billing count
-    const billings = await Billing.find()
-      .sort({ invoiceDate: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit);
+    const totalBillings = await Billing.find({ deliveryStatus: 'Pending' }).countDocuments(); // Get total billing count
+    
+    const billings = await Billing.find({ deliveryStatus: 'Pending' }) // Filter by deliveryStatus
+    .sort({ invoiceNo: -1 }) // Sort by invoiceNo in descending order // Skip documents for pagination
+    .limit(limit); // Limit to 'limit' number of documents
+  
 
     res.json({
       billings,
@@ -1252,28 +1253,29 @@ billingRouter.get("/billing/driver/suggestions", async (req, res) => {
     let { search = "" } = req.query;
     search = search.replace(/\s+/g, "").toUpperCase(); // Normalize the search term
 
-    // Search both `invoiceNo` and `customerName` fields with case insensitive regex
+    // Fetch suggestions based on the search term and delivery status
     const suggestions = await Billing.find({
       $and: [
         {
           $or: [
             { invoiceNo: { $regex: search, $options: "i" } },
-            { customerName: { $regex: search, $options: "i" } }
+            { customerName: { $regex: search, $options: "i" } },
           ]
         },
-        { deliveryStatus: { $nin: [ "Delivered"] } } // Filter only 'Sent' status
+        { deliveryStatus: { $nin: ["Delivered"] } } // Exclude 'Delivered' status
       ]
     })
       .sort({ invoiceNo: -1 })
       .collation({ locale: "en", numericOrdering: true })
       .limit(5); // Limit suggestions to 5
 
-    res.status(200).json(suggestions);
+    res.status(200).json(suggestions); // Send the filtered suggestions
   } catch (error) {
-    console.error("Error fetching suggestions:", error); // Log the error for debugging
+    console.error("Error fetching suggestions:", error); // Log errors for debugging
     res.status(500).json({ message: "Error fetching suggestions" });
   }
 });
+
 
 
 

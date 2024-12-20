@@ -332,7 +332,7 @@ productRouter.put('/get-item/:id', async (req, res) => {
 });
 
 productRouter.put('/update-stock/:id', async (req, res) => {
-  const { countInStock } = req.body; // Extract countInStock from the request body
+  const { countInStock, userName } = req.body; // Extract countInStock from the request body
 
   try {
     // Check if countInStock is a valid number (float or integer)
@@ -358,7 +358,7 @@ productRouter.put('/update-stock/:id', async (req, res) => {
     item_id: product.item_id,
     name: product.name,
     quantity: countInStock,
-    submittedBy: 'Bill Opening',
+    submittedBy: userName,
     remark: 'Bill Opening',
     date: new Date(),
   });
