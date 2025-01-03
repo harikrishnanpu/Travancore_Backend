@@ -159,25 +159,6 @@ BillingSchema.methods.addPayment = async function (payment) {
 };
 
 // Static method to calculate total quantity sold for a given item
-BillingSchema.statics.getTotalQuantitySold = async function (itemId) {
-  try {
-    const result = await this.aggregate([
-      { $unwind: "$products" },
-      { $match: { "products.item_id": itemId.trim() } },
-      {
-        $group: {
-          _id: "$products.item_id",
-          totalQuantity: { $sum: "$products.quantity" },
-        },
-      },
-    ]);
-
-    return result.length > 0 ? result[0].totalQuantity : 0;
-  } catch (error) {
-    console.error("Error in getTotalQuantitySold:", error);
-    return 0;
-  }
-};
 
 // Method to recalculate totalFuelCharge and totalOtherExpenses
 BillingSchema.methods.calculateTotals = function () {

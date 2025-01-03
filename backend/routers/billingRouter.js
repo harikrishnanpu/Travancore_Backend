@@ -1132,7 +1132,30 @@ billingRouter.get('/product/get-sold-out/:id', async (req, res) => {
   const itemId = req.params.id.trim();
 
   try {
-    const totalQuantity = await Billing.getTotalQuantitySold(itemId);
+    // Perform aggregation directly in the route handler
+    const aggregationResult = await Billing.aggregate([
+      // Optional: Filter only approved bills
+      { $match: { isApproved: true } },
+      
+      // Deconstruct the products array
+      { $unwind: "$products" },
+      
+      // Match the specific item_id
+      { $match: { "products.item_id": itemId } },
+      
+      // Group by item_id and sum the quantities
+      {
+        $group: {
+          _id: "$products.item_id",
+          totalQuantity: { $sum: "$products.quantity" }, // Ensure 'quantity' is the correct field
+        },
+      },
+    ]);
+
+    // console.log("Aggregation Result:", aggregationResult); // Debugging log
+
+    // Determine the totalQuantity from the aggregation result
+    const totalQuantity = aggregationResult.length > 0 ? aggregationResult[0].totalQuantity : 0;
 
     // Always return a result, even if no sales are found
     res.status(200).json({ itemId, totalQuantity });
