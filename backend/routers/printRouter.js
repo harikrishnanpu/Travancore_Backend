@@ -61,32 +61,32 @@ printRouter.post('/generate-pdf', async (req, res) => {
   <div class="invoice">
         <!-- Header Section -->
         <div class="header">
-            <p style="font-weight: 900;">KK TRADING</p>
-            <p style="font-size: 12px;margin-top: 10px;font-weight: 900;">Tiles, Granites, Sanitary Wares, UV Sheets</p>
+            <p style="font-weight: 900;">Travancore Backers</p>
+            <p style="font-size: 12px;margin-top: 10px;font-weight: 900;"></p>
         </div>
 
         <!-- Invoice Information -->
         <div class="invoice-info">
             <div>
-                <p style="font-size: 12px;font-weight: bolder;">Estimate no: <strong>${invoiceNo}</strong></p>
+                <p style="font-size: 12px;font-weight: bolder;">Invoice no: <strong>${invoiceNo}</strong></p>
                 <p>Invoice Date: <strong>${new Date(invoiceDate).toLocaleDateString()}</strong></p>
                 <p>Expected Delivery Date: <strong>${new Date(expectedDeliveryDate).toLocaleDateString()}</strong></p>
-                <p>Salesman: <strong>${salesmanName}</strong></p>
+                
                 <p>Additional Info:</p>
             </div>
             <div>
                 <p><strong>From:</strong></p>
-                <p style="font-weight: bold;">KK TRADING</p>
-                <p style="font-size: 10px;">Moncompu, Chambakulam,Road</p>
-                <p style="font-size: 10px;">Alappuzha, 688503</p>
-                <p style="font-size: 10px;">Contact: 0477 2080282</p>
-                <p style="font-size: 10px;">tradeinkk@gmail.com</p>
+                <p style="font-weight: bold;">Travancore Backers</p>
+                <p style="font-size: 10px;">Thiruvanvandoor, Chengannur</p>
+                <p style="font-size: 10px;">Alappuzha, 689109</p>
+                <p style="font-size: 10px;">Contact: 00000</p>
+                <p style="font-size: 10px;">travancore@tcbackers.com</p>
             </div>
         </div>
         <div class="invoice-info">
 
         <div style="font-size: 10px;">
-            <p><strong>Estimate To:</strong></p>
+            <p><strong>Invoice To:</strong></p>
             <p style="font-weight: bold;">${customerName}</p>
             <p>${customerAddress}</p>
             <p>State: Kerala</p>
@@ -94,7 +94,7 @@ printRouter.post('/generate-pdf', async (req, res) => {
         </div>
 
         <div style="font-size: 10px;">
-            <p style="font-size: 15px;"><strong>Estimate Bill</strong></p>
+            <p style="font-size: 15px;"><strong>Invoice</strong></p>
         </div>
 
         <div style="font-size: 10px;">
@@ -148,7 +148,7 @@ printRouter.post('/generate-pdf', async (req, res) => {
             <div style="font-size: 10px;margin-top: 50px;" class="payment-instructions">
                 <p><strong>Authorised Signatory:</strong></p>
                 <p style="margin-top: 40px;">Date: ------------------------------</p>
-                <p style="font-weight: bold;text-align: center;margin-top: 20px;">KK TRADING</p>
+                <p style="font-weight: bold;text-align: center;margin-top: 20px;">Travancore Backers</p>
             </div>
             <div>
                 <p>Subtotal: <span>${parseFloat(subTotal || 0).toFixed(2)}</span></p>
@@ -165,7 +165,7 @@ printRouter.post('/generate-pdf', async (req, res) => {
         <!-- Footer Section -->
                 <footer>Page ${pageNumber} of ${totalPages}</footer>
         <footer>
-            <p>Thank you for your business! 45 ദിവസത്തിന് ശേഷം ഉൽപ്പന്നങ്ങൾ മാറ്റിസ്ഥാപിക്കാനോ തിരികെ നൽകാനോ കഴിയില്ല. 30 ദിവസത്തിനുള്ളിൽ പകരം വയ്ക്കുന്നവർക്ക് മാത്രം ജിഎസ്ടി ഉൾപ്പെടെയുള്ള റീഫണ്ടുകൾ.</p>
+            <p>Thank you for your business!</p>
         </footer>
     </div>
   `;
@@ -213,7 +213,7 @@ printRouter.post('/generate-pdf', async (req, res) => {
             margin: auto;
         }
         .header {
-            background-color: #960101; /* Dark Red */
+            background-color: #6f472d; /* Dark Red */
             padding: 20px;
             color: #fff;
             text-align: center;
@@ -250,8 +250,8 @@ printRouter.post('/generate-pdf', async (req, res) => {
             margin-top: 20px;
         }
         .invoice-table th {
-            background-color: #f4cccc; /* Light Red */
-            color: #960101; /* Dark Red */
+            background-color: #d5a27d; /* Light Red */
+            color: #6f472d; /* Dark Red */
             padding: 12px;
             border: 1px solid #ddd;
             font-size: 12px;
@@ -272,7 +272,7 @@ printRouter.post('/generate-pdf', async (req, res) => {
         }
         .totals span {
             font-weight: bold;
-            color: #960101;
+            color: #6f472d;
         }
         .payment-instructions {
             margin-top: 30px;
@@ -385,17 +385,17 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
      <div class="invoice">
           <!-- Header Section -->
           <div class="header">
-              <p style="font-weight: 900;">KK TRADING</p>
-              <p style="font-size: 12px;margin-top: 10px;font-weight: 900;">Tiles, Granites, Sanitary Wares, UV Sheets</p>
+              <p style="font-weight: 900;">Travancore Backers</p>
+              <p style="font-size: 12px;margin-top: 10px;font-weight: 900;"></p>
           </div>
 
           <!-- Invoice Information -->
           <div class="invoice-info">
               <div>
-                  <p style="font-size: 12px;font-weight: bolder;">Estimate no: <strong>${invoiceNo}</strong></p>
-                  <p>Estimation Date: <strong>${new Date(invoiceDate).toLocaleDateString()}</strong></p>
+                  <p style="font-size: 12px;font-weight: bolder;">Invoice no: <strong>${invoiceNo}</strong></p>
+                  <p>Invoice Date: <strong>${new Date(invoiceDate).toLocaleDateString()}</strong></p>
                   <p>Expected Delivery Date: <strong>${new Date(expectedDeliveryDate).toLocaleDateString()}</strong></p>
-                  <p>Salesman: <strong>${salesmanName}</strong></p>
+                  
                   <p>Additional Info:</p>
               </div>
                         <!-- QR Code Section -->
@@ -404,17 +404,17 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
           </div>
               <div>
                   <p><strong>From:</strong></p>
-                  <p style="font-weight: bold;">KK TRADING</p>
-                  <p style="font-size: 10px;">Moncompu, Chambakulam,Road</p>
-                  <p style="font-size: 10px;">Alappuzha, 688503</p>
-                  <p style="font-size: 10px;">Contact: 0477 2080282</p>
-                  <p style="font-size: 10px;">tradeinkk@gmail.com</p>
+                  <p style="font-weight: bold;">Travancore Backers</p>
+                  <p style="font-size: 10px;">Thiruvanvandoor, Chengannur</p>
+                  <p style="font-size: 10px;">Alappuzha, 689109</p>
+                  <p style="font-size: 10px;">Contact: 00000</p>
+                  <p style="font-size: 10px;">travancore@tcnbackers.com</p>
               </div>
           </div>
           <div class="invoice-info">
 
           <div style="font-size: 10px;">
-              <p><strong>Estimate To:</strong></p>
+              <p><strong>Invoice To:</strong></p>
               <p style="font-weight: bold;">${customerName}</p>
               <p>${customerAddress}</p>
               <p>State: Kerala</p>
@@ -422,7 +422,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
           </div>
 
           <div style="font-size: 10px;">
-              <p style="font-size: 15px;"><strong>Estimate Bill</strong></p>
+              <p style="font-size: 15px;"><strong>Invoice</strong></p>
           </div>
 
           <div style="font-size: 10px;">
@@ -445,7 +445,6 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
                       <th>Qty</th>
                       <th>Unit</th>
                       <th>Price</th>
-                      <th>Qty(per psc)</th>
                       <th>Discount</th>
                       <th>Total Amount</th>
                   </tr>
@@ -461,7 +460,6 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
                                 <td>${safeGet(product.enteredQty)}</td>
                                 <td>${safeGet(product.unit)}</td>
                                 <td>${safeGet(product.sellingPrice)}</td>
-                                <td>${safeGet(product.quantity).toFixed(2)}</td>
                                 <td>${(product.quantity * parseFloat(perItemDiscount)).toFixed(2)}</td>
                                 <td>${((product.quantity * parseFloat(product.sellingPriceinQty)) - (product.quantity * parseFloat(perItemDiscount))).toFixed(2) || 'N/A'}</td>
                             </tr>`).join('')
@@ -476,17 +474,15 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
               <div style="font-size: 10px;margin-top: 50px;" class="payment-instructions">
                   <p><strong>Authorised Signatory:</strong></p>
                   <p style="margin-top: 40px;">Date: ------------------------------</p>
-                  <p style="font-weight: bold;text-align: center;margin-top: 20px;">KK TRADING</p>
+                  <p style="font-weight: bold;text-align: center;margin-top: 20px;">Travancore Backers</p>
               </div>
               <div>
                   <p>Subtotal: <span>${parseFloat(subTotal || 0).toFixed(2)}</span></p>
                   <p>Discount: <span>${parseFloat(discount || 0).toFixed(2)}</span></p>
-                  <p>Cgst (9%): <span>${parseFloat(cgst || 0).toFixed(2)}</span></p>
-                  <p>Sgst (9%): <span>${parseFloat(sgst || 0).toFixed(2)}</span></p>
                   <p>Total Amount: <span>${parseFloat(billingAmount || 0).toFixed(2)}</span></p>
-                  <p>Transportation Charges: <span>${parseFloat(transportation || 0).toFixed(2)}</span></p>
-                  <p>Unloading Charges: <span>${parseFloat(unloading || 0).toFixed(2)}</span></p>
-                  <p>Handling Charge: <span>${parseFloat(handling || 0).toFixed(2)}</span></p>
+                  <p>Delivery Charges: <span>${parseFloat(transportation || 0).toFixed(2)}</span></p>
+                  
+                  <p>Other Charge: <span>${parseFloat(handling || 0).toFixed(2)}</span></p>
                   <p>Round Off: <span>0.0</span></p>
                   <p style="font-size: 15px;"><strong>Grand Total: <span>${parseFloat(grandTotal || 0).toFixed(2)}</span></strong></p>
               </div>
@@ -495,7 +491,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
           <!-- Footer Section -->
                   <footer>Page ${pageNumber} of ${totalPages}</footer>
           <footer>
-              <p>Thank you for your business! 45 ദിവസത്തിന് ശേഷം ഉൽപ്പന്നങ്ങൾ മാറ്റിസ്ഥാപിക്കാനോ തിരികെ നൽകാനോ കഴിയില്ല. 30 ദിവസത്തിനുള്ളിൽ പകരം വയ്ക്കുന്നവർക്ക് മാത്രം ജിഎസ്ടി ഉൾപ്പെടെയുള്ള റീഫണ്ടുകൾ.</p>
+              <p>Thank you for your business!</p>
           </footer>
       </div>
     `;
@@ -544,7 +540,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
             page-break-after: always;
         }
         .header {
-            background-color: #960101; /* Dark Red */
+            background-color: #6f472d; /* Dark Red */
             padding: 20px;
             color: #fff;
             text-align: center;
@@ -581,8 +577,8 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
             margin-top: 20px;
         }
         .invoice-table th {
-            background-color: #f4cccc; /* Light Red */
-            color: #960101; /* Dark Red */
+            background-color: #d5a27d; /* Light Red */
+            color: #6f472d; /* Dark Red */
             padding: 12px;
             border: 1px solid #ddd;
             font-size: 12px;
@@ -603,7 +599,7 @@ printRouter.post('/generate-invoice-html', async (req, res) => {
         }
         .totals span {
             font-weight: bold;
-            color: #960101;
+            color: #6f472d;
         }
         .payment-instructions {
             margin-top: 30px;
@@ -870,7 +866,7 @@ printRouter.post('/daily/generate-report', async (req, res) => {
           <div class="container">
               <div class="header">
                   <div>
-                      <h1>KK TRADING</h1>
+                      <h1>Travancore Backers</h1>
                       <p>Daily Transactions Report</p>
                       <p>From: ${new Date(params.fromDate).toLocaleDateString()} To: ${new Date(params.toDate).toLocaleDateString()}</p>
                   </div>
@@ -971,7 +967,7 @@ printRouter.post('/daily/generate-report', async (req, res) => {
               </table>
               
               <footer>
-                  <p>Daily Report - KK TRADING.</p>
+                  <p>Daily Report - Travancore Backers.</p>
               </footer>
           </div>
       </body>
@@ -1049,8 +1045,8 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
       <div class="invoice">
         <!-- Header Section -->
         <div class="header">
-          <p style="font-weight: 900; font-size: 24px;">KK TRADING</p>
-          <p style="font-size: 14px; margin-top: 5px; font-weight: 600;">Tiles, Granites, Sanitary Wares, UV Sheets</p>
+          <p style="font-weight: 900; font-size: 24px;">Travancore Backers</p>
+          <p style="font-size: 14px; margin-top: 5px; font-weight: 600;"></p>
         </div>
 
         <!-- Invoice Information -->
@@ -1069,11 +1065,11 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
 
           <div>
             <p><strong>From:</strong></p>
-            <p style="font-weight: bold;">KK TRADING</p>
+            <p style="font-weight: bold;">Travancore Backers</p>
             <p style="font-size: 12px;">Moncompu, Chambakulam, Road</p>
-            <p style="font-size: 12px;">Alappuzha, 688503</p>
-            <p style="font-size: 12px;">Contact: 0477 2080282</p>
-            <p style="font-size: 12px;">tradeinkk@gmail.com</p>
+            <p style="font-size: 12px;">Alappuzha, 689109</p>
+            <p style="font-size: 12px;">Contact: 00000</p>
+            <p style="font-size: 12px;">travancore@backers.com</p>
           </div>
         </div>
 
@@ -1190,7 +1186,7 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
         <div class="payment-instructions">
           <p><strong>Authorised Signatory:</strong></p>
           <p style="margin-top: 40px;">Date: ____________________________</p>
-          <p style="font-weight: bold; text-align: center; margin-top: 20px;">KK TRADING</p>
+          <p style="font-weight: bold; text-align: center; margin-top: 20px;">Travancore Backers</p>
         </div>
         `
             : ``
@@ -1233,7 +1229,7 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
             page-break-after: always;
           }
           .header {
-            background-color: #960101; /* Dark Red */
+            background-color: #6f472d; /* Dark Red */
             padding: 10px 20px;
             color: #fff;
             text-align: center;
@@ -1259,8 +1255,8 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
             margin-top: 20px;
           }
           .invoice-table th {
-            background-color: #f4cccc; /* Light Red */
-            color: #960101; /* Dark Red */
+            background-color: #d5a27d; /* Light Red */
+            color: #6f472d; /* Dark Red */
             padding: 12px;
             border: 1px solid #ddd;
             font-size: 14px;
@@ -1281,7 +1277,7 @@ printRouter.post('/generate-purchase-invoice-html', async (req, res) => {
           }
           .totals span {
             font-weight: bold;
-            color: #960101;
+            color: #6f472d;
           }
           .payment-instructions {
             margin-top: 30px;
@@ -1431,7 +1427,7 @@ function generateReturnInvoiceHTML(returnData, qrCodeDataURL) {
   <head>
   <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KK Trading - Return Invoice</title>
+    <title>Travancore Backers - Return Invoice</title>
     <style>
       /* CSS styles */
       body {
@@ -1446,7 +1442,7 @@ function generateReturnInvoiceHTML(returnData, qrCodeDataURL) {
       }
       .header {
         text-align: center;
-        background-color: #960101; /* Dark Red */
+        background-color: #6f472d; /* Dark Red */
         color: #fff;
         padding: 20px;
         border-top-left-radius: 10px;
@@ -1475,8 +1471,8 @@ function generateReturnInvoiceHTML(returnData, qrCodeDataURL) {
         padding: 8px;
       }
       .products-table th {
-        background-color: #f4cccc; /* Light Red */
-        color: #960101; /* Dark Red */
+        background-color: #d5a27d; /* Light Red */
+        color: #6f472d; /* Dark Red */
       }
       .totals {
         margin-top: 20px;
@@ -1536,8 +1532,8 @@ function generateReturnInvoiceHTML(returnData, qrCodeDataURL) {
   <body>
     <div class="invoice">
       <div class="header">
-        <h1>KK TRADING</h1>
-        <p>Tiles, Granites, Sanitary Wares, UV Sheets</p>
+        <h1>Travancore Backers</h1>
+        <p></p>
       </div>
       <div class="qr-code">
         <img src="${qrCodeDataURL}" alt="QR Code" width="100" height="100" />
@@ -1737,8 +1733,8 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
     <div class="loading-slip">
       <!-- Header Section -->
       <div class="header">
-        <h1>KK TRADING</h1>
-        <p class="sub-header">Tiles, Granites, Sanitary Wares, UV Sheets</p>
+        <h1>Travancore Backers</h1>
+        <p class="sub-header"></p>
       </div>
 
       <!-- Delivery & Payment Info -->
@@ -1787,7 +1783,7 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
       <div class="footer-section">
         <p>Page ${pageNumber} of ${totalPages}</p>
         <p class="disclaimer">
-        KK TRADING - loading Slip of ${invoiceNo}
+        Travancore Backers - loading Slip of ${invoiceNo}
         </p>
       </div>
     </div>
@@ -1827,7 +1823,7 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
             page-break-after: always;
           }
           .header {
-            background-color: #960101; /* Dark Red */
+            background-color: #6f472d; /* Dark Red */
             padding: 10px;
             color: #fff;
             text-align: center;
@@ -1862,7 +1858,7 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
           }
           .loading-slip-title h2 {
             font-size: 12px;
-            color: #960101;
+            color: #6f472d;
             text-transform: uppercase;
             margin-bottom: 5px;
           }
@@ -1881,8 +1877,8 @@ printRouter.post('/generate-loading-slip-pdf', async (req, res) => {
             font-size: 9px;
           }
           .products-table th {
-            background-color: #f4cccc;
-            color: #960101;
+            background-color: #d5a27d;
+            color: #6f472d;
             padding: 4px;
             border: 1px solid #ddd;
             text-align: center;
@@ -1984,7 +1980,7 @@ printRouter.post('/generate-leave-application-pdf', async (req, res) => {
         margin-bottom: 5px;
         font-size: 16px;
         font-weight: bold;
-        color: #960101;
+        color: #6f472d;
       }
 
       .header p {
@@ -2038,9 +2034,9 @@ printRouter.post('/generate-leave-application-pdf', async (req, res) => {
   </head>
   <body>
     <div class="header">
-      <h1>KK TRADING</h1>
+      <h1>Travancore Backers</h1>
       <p>Chambakulam, Moncompu</p>
-      <p>Contact: 8606565282 | tradeinkk@gmail.com</p>
+      <p>Contact: 8606565282 | travancobackers.com</p>
       <hr>
     </div>
 
@@ -2066,7 +2062,7 @@ printRouter.post('/generate-leave-application-pdf', async (req, res) => {
     </div>
 
     <footer>
-      <p>KK Trading - Leave Letter</p>
+      <p>Travancore Backers - Leave Letter</p>
     </footer>
   </body>
   </html>

@@ -54,7 +54,6 @@ orderRouter.get('/transport/:id', async (req, res) => {
   try {
     const transport = await Transportation.find({ purchaseId: req.params.id });
     if (!transport) {
-      console.log("not found")
       return res.status(500).json({ message: 'Billing not found' });
     }
     console.log(transport);

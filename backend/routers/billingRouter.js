@@ -1282,7 +1282,7 @@ billingRouter.get("/billing/driver/suggestions", async (req, res) => {
 billingRouter.get('/lastOrder/id', async (req, res) => {
   try {
     // Fetch the invoice with the highest sequence number starting with 'K'
-    const billing = await Billing.findOne({ invoiceNo: /^KK\d+$/ })
+    const billing = await Billing.findOne({ invoiceNo: /^TB\d+$/ })
       .sort({ invoiceNo: -1 })
       .collation({ locale: "en", numericOrdering: true });
 
@@ -1310,7 +1310,7 @@ billingRouter.get('/lastOrder/id', async (req, res) => {
         }
       ]);
 
-    let lastInvoice = 'KK0';
+    let lastInvoice = 'TB0';
     let lastCustomerId = 'CUS0';
 
     if (billing) {

@@ -5,14 +5,15 @@ const billingSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   date: { type: Date, default: Date.now },
   invoiceNo: { type: String, required: true },
+  purchaseId: { type: String }, // Optional to link purchase ID
 });
 
 const paymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   date: { type: Date, default: Date.now },
-  method: { type: String, required: true }, // accountId from PaymentsAccount
+  method: { type: String, required: true }, 
   submittedBy: { type: String, required: true },
-  referenceId: { type: String},
+  referenceId: { type: String },
   remark: { type: String },
 });
 
@@ -20,8 +21,8 @@ const sellerPaymentSchema = new mongoose.Schema(
   {
     sellerId: { type: String, required: true },
     sellerName: { type: String, required: true },
-    billings: [billingSchema], // Array of bills
-    payments: [paymentSchema], // Array of payments
+    billings: [billingSchema], // Past bills
+    payments: [paymentSchema], // Past payments
     totalAmountBilled: { type: Number, default: 0 },
     totalAmountPaid: { type: Number, default: 0 },
     paymentRemaining: { type: Number, default: 0 },
@@ -29,10 +30,9 @@ const sellerPaymentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Middleware to calculate totals before saving
 sellerPaymentSchema.pre('save', function (next) {
-  this.totalAmountBilled = this.billings.reduce((sum, billing) => sum + billing.amount, 0);
-  this.totalAmountPaid = this.payments.reduce((sum, payment) => sum + payment.amount, 0);
+  this.totalAmountBilled = this.billings.reduce((sum, b) => sum + b.amount, 0);
+  this.totalAmountPaid = this.payments.reduce((sum, p) => sum + p.amount, 0);
   this.paymentRemaining = this.totalAmountBilled - this.totalAmountPaid;
   next();
 });

@@ -3,8 +3,8 @@ import mongoose from 'mongoose';
 
 const transportPaymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
-  billId: { type: String, required: true},
-  method: { type: String, required: true }, // e.g., "credit card", "cash", etc.
+  billId: { type: String, required: true },
+  method: { type: String, required: true }, // e.g. "cash", "card"
   submittedBy: { type: String, required: true },
   date: { type: Date, default: Date.now },
   referenceId: { type: String, required: true },
@@ -21,19 +21,18 @@ const transportBillingSchema = new mongoose.Schema({
 const transportPaymentAggregateSchema = new mongoose.Schema(
   {
     transportName: { type: String, required: true },
-    transportType: { type: String, required: true }, // e.g., 'local', 'logistic'
-    transportGst: { type: String},
-    payments: [transportPaymentSchema], // Array of payments
-    billings: [transportBillingSchema], // Array of billings
-    totalAmountBilled: { type: Number, default: 0 }, // Total amount from billings
-    totalAmountPaid: { type: Number, default: 0 }, // Total amount from payments
-    paymentRemaining: { type: Number, default: 0 }, // Auto-calculated field
+    transportType: { type: String, required: true }, // e.g., "general", "local"
+    transportGst: { type: String },
+    payments: [transportPaymentSchema],  // Detailed payments
+    billings: [transportBillingSchema],  // Detailed billings
+    totalAmountBilled: { type: Number, default: 0 },
+    totalAmountPaid: { type: Number, default: 0 },
+    paymentRemaining: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
 
-
-// Method to add a payment and recalculate amounts
+// Add or recalc logic
 transportPaymentAggregateSchema.methods.addPayment = function (payment) {
   this.payments.push(payment);
   this.totalAmountPaid += payment.amount;
@@ -41,7 +40,6 @@ transportPaymentAggregateSchema.methods.addPayment = function (payment) {
   return this.save();
 };
 
-// Method to add a billing and recalculate amounts
 transportPaymentAggregateSchema.methods.addBilling = function (billing) {
   this.billings.push(billing);
   this.totalAmountBilled += billing.amount;
@@ -49,10 +47,9 @@ transportPaymentAggregateSchema.methods.addBilling = function (billing) {
   return this.save();
 };
 
-// Pre-save middleware to auto-calculate total amounts and payment remaining
 transportPaymentAggregateSchema.pre('save', function (next) {
-  this.totalAmountPaid = this.payments.reduce((sum, payment) => sum + payment.amount, 0);
-  this.totalAmountBilled = this.billings.reduce((sum, billing) => sum + billing.amount, 0);
+  this.totalAmountPaid = this.payments.reduce((sum, p) => sum + p.amount, 0);
+  this.totalAmountBilled = this.billings.reduce((sum, b) => sum + b.amount, 0);
   this.paymentRemaining = this.totalAmountBilled - this.totalAmountPaid;
   next();
 });
