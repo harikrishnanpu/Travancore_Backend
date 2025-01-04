@@ -1164,7 +1164,7 @@ productRouter.delete(
       }
 
       // 5) Finally, remove the purchase doc
-      await purchase.remove();
+      await Purchase.deleteOne({ _id: req.params.id });
 
       res.json({ message: 'Purchase deleted successfully' });
     } catch (error) {
